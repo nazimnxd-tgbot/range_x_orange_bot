@@ -1,0 +1,16 @@
+{
+  "build": {
+    "builder": "NIXPACKS",
+    "nixpacksConfig": {
+      "setup": "npm install",
+      "install": "npx playwright install chromium",
+      "postInstall": "node -e \"console.log('Playwright installed')\""
+    }
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10,
+    "startCommand": "node index.js"
+  }
+}
