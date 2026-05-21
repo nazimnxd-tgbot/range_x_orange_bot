@@ -2,9 +2,9 @@
   "build": {
     "builder": "NIXPACKS",
     "nixpacksConfig": {
-      "setup": "npm install",
-      "install": "npx playwright install chromium",
-      "postInstall": "node -e \"console.log('Playwright installed')\""
+      "setup": "apt-get update && apt-get install -y libglib2.0-0 libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 libgbm1 libasound2",
+      "install": "npm install && npx playwright install chromium",
+      "nodeVersion": "20.x"
     }
   },
   "deploy": {
