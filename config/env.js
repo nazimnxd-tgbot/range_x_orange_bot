@@ -8,7 +8,7 @@ export const USERNAME = "n.nazim1132@gmail.com";
 export const PASSWORD = "Abcd1234";
 
 // ======================= BROWSER CONFIGURATION =======================
-export const BROWSER_COUNT = 3;
+export const BROWSER_COUNT = 1;
 export const SCAN_INTERVAL_MS = 1000;
 export const SCAN_TIMEOUT_MS = 3000;
 export const LOGIN_WAIT_MS = 10000;
