@@ -10,178 +10,87 @@ import axios from 'axios';
 import crypto from 'crypto';
 import os from 'os';
 
+// Import configurations
+import {
+    BOT_TOKEN,
+    ADMIN_ID,
+    ADMIN_USERNAME,
+    USERNAME,
+    PASSWORD,
+    BROWSER_COUNT,
+    SCAN_INTERVAL_MS,
+    SCAN_TIMEOUT_MS,
+    LOGIN_WAIT_MS,
+    HEADLESS_MODE,
+    DEVICE_VERIFICATION_ENABLED,
+    DEVICE_SHEET_URL,
+    LOGIN_URL,
+    CLI_ACCESS_URL,
+    LIVE_RESULT_LIMIT,
+    LIVE_COUNTRY_SUMMARY_LIMIT,
+    LIVE_UPDATE_INTERVAL_SECONDS,
+    LIVE_SHOW_COUNTRY_SUMMARY,
+    LIVE_AUTO_REFRESH_ENABLED,
+    DEMO_LIVE_UPDATE_ENABLED,
+    DEMO_LIVE_UPDATE_INTERVAL_SECONDS,
+    REPORT_5_MIN_LIMIT,
+    REPORT_5_MIN_COUNTRY_LIMIT,
+    REPORT_5_MIN_SHOW_COUNTRY_SUMMARY,
+    REPORT_10_MIN_LIMIT,
+    REPORT_10_MIN_COUNTRY_LIMIT,
+    REPORT_10_MIN_SHOW_COUNTRY_SUMMARY,
+    TOP_HIT_LIMIT,
+    TOP_HIT_COUNTRY_LIMIT,
+    TOP_HIT_WINDOW_MINUTES,
+    TOP_HIT_SHOW_COUNTRY_SUMMARY,
+    SEARCH_RANGE_LIMIT,
+    SEARCH_WINDOW_MINUTES,
+    SEARCH_COUNTRY_SUMMARY,
+    CLI_SEARCH_LIMIT,
+    CLI_SEARCH_WINDOW_MINUTES,
+    CLI_SEARCH_COUNTRY_SUMMARY,
+    DEMO_RESULTS_LIMIT,
+    DEMO_WINDOW_MINUTES,
+    DEMO_COUNTRY_SUMMARY_LIMIT,
+    DEMO_MASK_MODE,
+    RANGES_PER_CLI
+} from './env.js';
+
+import { 
+    PRICE_SETTINGS, 
+    PREMIUM_PLAN, 
+    PAYMENT_METHODS, 
+    PAYMENT_MESSAGES, 
+    ADMIN_NOTIFICATION, 
+    BUTTON_LABELS 
+} from './paymentenv.js';
+
+import { getCliTargets } from './cli.js';
+import { getCountryFlag, getCountryNameFromRange } from './countries.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ======================= DATA DIRECTORY SETUP FOR RAILWAY =======================
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data_cache');
-if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    console.log(`📁 Created data directory: ${DATA_DIR}`);
-}
+// ======================= DATA DIRECTORY =======================
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// File paths
 const USER_DB_PATH = path.join(DATA_DIR, 'subscription_db.json');
 const SUB_ADMIN_FILE = path.join(DATA_DIR, 'sub_admins.json');
 const SUB_ADMIN_NAMES_FILE = path.join(DATA_DIR, 'sub_admin_names.json');
 const LOG_PATH = path.join(DATA_DIR, 'bot_log.txt');
-const DEVICE_ID_PATH = path.join(DATA_DIR, '.device_id');
-
-// ======================= GOOGLE DRIVE FILE IDs (আপনার ID বসান) =======================
-const DRIVE_FILES = {
-    subscription: { id: "12VSS_cq37C5VgJDniXxOSyANKiw3GeI8", path: "subscription_db.json" },
-    subAdmins: { id: "12tbUq-SwhRWqy2F3u6R-PhIYlpzkyMsc", path: "sub_admins.json" },
-    subAdminNames: { id: "1nE-jEqc7XaLE1NbSmSmjfEDuwQuxgl9o", path: "sub_admin_names.json" },
-    log: { id: "1GUL8MpQMTDodYsHtR52kHbxxU_zWnKOx", path: "bot_log.txt" }
-};
-
-// ======================= GOOGLE DRIVE FUNCTIONS =======================
-async function downloadFromDrive(fileId) {
-    try {
-        const url = `https://drive.google.com/uc?export=download&id=${fileId}`;
-        const response = await axios.get(url, { responseType: 'arraybuffer' });
-        return response.data;
-    } catch (error) {
-        const url = `https://drive.usercontent.google.com/download?id=${fileId}&export=download`;
-        const response = await axios.get(url, { responseType: 'arraybuffer' });
-        return response.data;
-    }
-}
-
-async function loadDataFromDrive() {
-    console.log("📁 Loading data from Google Drive...");
-    
-    for (const [key, file] of Object.entries(DRIVE_FILES)) {
-        if (!file.id) continue;
-        try {
-            const content = await downloadFromDrive(file.id);
-            const filePath = path.join(DATA_DIR, file.path);
-            fs.writeFileSync(filePath, content);
-            console.log(`✅ Loaded: ${file.path}`);
-        } catch (error) {
-            console.log(`⚠️ Could not load ${file.path}, starting fresh.`);
-        }
-    }
-    console.log("✅ All data loaded from Google Drive!");
-}
-
-// ======================= LOAD CONFIG FILES =======================
-let CONFIG = {};
-
-try {
-    const envPath = path.join(__dirname, 'config', 'env.js');
-    if (fs.existsSync(envPath)) {
-        const envModule = await import(`file://${envPath}`);
-        CONFIG = { ...CONFIG, ...envModule };
-        console.log('✅ Loaded env.js');
-    }
-} catch(e) { console.log('⚠️ Could not load env.js'); }
-
-try {
-    const paymentPath = path.join(__dirname, 'config', 'paymentenv.js');
-    if (fs.existsSync(paymentPath)) {
-        const paymentModule = await import(`file://${paymentPath}`);
-        CONFIG = { ...CONFIG, ...paymentModule };
-        console.log('✅ Loaded paymentenv.js');
-    }
-} catch(e) { console.log('⚠️ Could not load paymentenv.js'); }
-
-try {
-    const cliPath = path.join(__dirname, 'config', 'cli.js');
-    if (fs.existsSync(cliPath)) {
-        const cliModule = await import(`file://${cliPath}`);
-        CONFIG = { ...CONFIG, ...cliModule };
-        console.log('✅ Loaded cli.js');
-    }
-} catch(e) { console.log('⚠️ Could not load cli.js'); }
-
-try {
-    const countriesPath = path.join(__dirname, 'config', 'countries.js');
-    if (fs.existsSync(countriesPath)) {
-        const countriesModule = await import(`file://${countriesPath}`);
-        CONFIG = { ...CONFIG, ...countriesModule };
-        console.log('✅ Loaded countries.js');
-    }
-} catch(e) { console.log('⚠️ Could not load countries.js'); }
-
-// Configuration variables
-const BOT_TOKEN = CONFIG.BOT_TOKEN || process.env.BOT_TOKEN;
-const ADMIN_ID = CONFIG.ADMIN_ID || parseInt(process.env.ADMIN_ID || '7064572216');
-const ADMIN_USERNAME = CONFIG.ADMIN_USERNAME || process.env.ADMIN_USERNAME || "@xDnaZim";
-const USERNAME = CONFIG.USERNAME || "n.nazim1132@gmail.com";
-const PASSWORD = CONFIG.PASSWORD || "Abcd1234";
-const BROWSER_COUNT = CONFIG.BROWSER_COUNT || 2;
-const SCAN_INTERVAL_MS = CONFIG.SCAN_INTERVAL_MS || 3000;
-const SCAN_TIMEOUT_MS = CONFIG.SCAN_TIMEOUT_MS || 15000;
-const LOGIN_WAIT_MS = CONFIG.LOGIN_WAIT_MS || 8000;
-const HEADLESS_MODE = CONFIG.HEADLESS_MODE !== undefined ? CONFIG.HEADLESS_MODE : true;
-const DEVICE_VERIFICATION_ENABLED = CONFIG.DEVICE_VERIFICATION_ENABLED !== undefined ? CONFIG.DEVICE_VERIFICATION_ENABLED : true;
-const DEVICE_SHEET_URL = CONFIG.DEVICE_SHEET_URL || "https://opensheet.elk.sh/17vn-T_6SRP-FLBtkSpBhsah98cyqWWrtOEHF2AsU778/SMS_DB";
-const LOGIN_URL = CONFIG.LOGIN_URL || "https://www.orangecarrier.com/login";
-const CLI_ACCESS_URL = CONFIG.CLI_ACCESS_URL || "https://www.orangecarrier.com/services/cli/access";
-const LIVE_RESULT_LIMIT = CONFIG.LIVE_RESULT_LIMIT || 30;
-const LIVE_COUNTRY_SUMMARY_LIMIT = CONFIG.LIVE_COUNTRY_SUMMARY_LIMIT || 10;
-const LIVE_UPDATE_INTERVAL_SECONDS = CONFIG.LIVE_UPDATE_INTERVAL_SECONDS || 5;
-const LIVE_SHOW_COUNTRY_SUMMARY = CONFIG.LIVE_SHOW_COUNTRY_SUMMARY !== undefined ? CONFIG.LIVE_SHOW_COUNTRY_SUMMARY : true;
-const LIVE_AUTO_REFRESH_ENABLED = CONFIG.LIVE_AUTO_REFRESH_ENABLED !== undefined ? CONFIG.LIVE_AUTO_REFRESH_ENABLED : true;
-const DEMO_LIVE_UPDATE_ENABLED = CONFIG.DEMO_LIVE_UPDATE_ENABLED !== undefined ? CONFIG.DEMO_LIVE_UPDATE_ENABLED : true;
-const DEMO_LIVE_UPDATE_INTERVAL_SECONDS = CONFIG.DEMO_LIVE_UPDATE_INTERVAL_SECONDS || 5;
-const REPORT_5_MIN_LIMIT = CONFIG.REPORT_5_MIN_LIMIT || 30;
-const REPORT_5_MIN_COUNTRY_LIMIT = CONFIG.REPORT_5_MIN_COUNTRY_LIMIT || 10;
-const REPORT_5_MIN_SHOW_COUNTRY_SUMMARY = CONFIG.REPORT_5_MIN_SHOW_COUNTRY_SUMMARY !== undefined ? CONFIG.REPORT_5_MIN_SHOW_COUNTRY_SUMMARY : true;
-const REPORT_10_MIN_LIMIT = CONFIG.REPORT_10_MIN_LIMIT || 30;
-const REPORT_10_MIN_COUNTRY_LIMIT = CONFIG.REPORT_10_MIN_COUNTRY_LIMIT || 10;
-const REPORT_10_MIN_SHOW_COUNTRY_SUMMARY = CONFIG.REPORT_10_MIN_SHOW_COUNTRY_SUMMARY !== undefined ? CONFIG.REPORT_10_MIN_SHOW_COUNTRY_SUMMARY : true;
-const TOP_HIT_LIMIT = CONFIG.TOP_HIT_LIMIT || 30;
-const TOP_HIT_COUNTRY_LIMIT = CONFIG.TOP_HIT_COUNTRY_LIMIT || 10;
-const TOP_HIT_WINDOW_MINUTES = CONFIG.TOP_HIT_WINDOW_MINUTES || 30;
-const TOP_HIT_SHOW_COUNTRY_SUMMARY = CONFIG.TOP_HIT_SHOW_COUNTRY_SUMMARY !== undefined ? CONFIG.TOP_HIT_SHOW_COUNTRY_SUMMARY : true;
-const SEARCH_RANGE_LIMIT = CONFIG.SEARCH_RANGE_LIMIT || 30;
-const SEARCH_WINDOW_MINUTES = CONFIG.SEARCH_WINDOW_MINUTES || 30;
-const SEARCH_COUNTRY_SUMMARY = CONFIG.SEARCH_COUNTRY_SUMMARY || false;
-const CLI_SEARCH_LIMIT = CONFIG.CLI_SEARCH_LIMIT || 30;
-const CLI_SEARCH_WINDOW_MINUTES = CONFIG.CLI_SEARCH_WINDOW_MINUTES || 30;
-const CLI_SEARCH_COUNTRY_SUMMARY = CONFIG.CLI_SEARCH_COUNTRY_SUMMARY || false;
-const DEMO_RESULTS_LIMIT = CONFIG.DEMO_RESULTS_LIMIT || 10;
-const DEMO_WINDOW_MINUTES = CONFIG.DEMO_WINDOW_MINUTES || 60;
-const DEMO_COUNTRY_SUMMARY_LIMIT = CONFIG.DEMO_COUNTRY_SUMMARY_LIMIT || 5;
-const DEMO_MASK_MODE = CONFIG.DEMO_MASK_MODE !== undefined ? CONFIG.DEMO_MASK_MODE : true;
-const RANGES_PER_CLI = CONFIG.RANGES_PER_CLI || 30;
-
-// Payment config
-const PAYMENT_METHODS = CONFIG.PAYMENT_METHODS || {};
-const PREMIUM_PLAN = CONFIG.PREMIUM_PLAN || { duration: 30 };
-const PRICE_SETTINGS = CONFIG.PRICE_SETTINGS || { bdt_amount: 130, bdt_currency: "BDT", usd_amount: 1, usd_currency: "$" };
-
-function getPriceDisplay() {
-    return `💵 Price : ${PRICE_SETTINGS.bdt_amount} ${PRICE_SETTINGS.bdt_currency} / ${PRICE_SETTINGS.usd_amount}${PRICE_SETTINGS.usd_currency}\n🗓️ Duration : ${PREMIUM_PLAN.duration} Days`;
-}
-
-function getCliTargets() {
-    return CONFIG.CLI_TARGETS || [];
-}
-
-function getCountryFlag(countryName) {
-    if (!countryName) return "🌍";
-    if (CONFIG.getCountryFlag) return CONFIG.getCountryFlag(countryName);
-    return "🌍";
-}
-
-function getCountryNameFromRange(rangeName) {
-    const words = rangeName.split(' ');
-    return words[0] || null;
-}
 
 // ======================= DEVICE VERIFICATION =======================
 function getDeviceId() {
-    const raw = os.platform() + os.hostname() + os.arch() + (os.cpus()[0]?.model || '');
+    const raw = os.platform() + os.hostname() + os.arch();
     const deviceId = crypto.createHash('md5').update(raw).digest('hex');
+    const deviceIdPath = path.join(DATA_DIR, '.device_id');
     try {
-        if (fs.existsSync(DEVICE_ID_PATH)) {
-            const savedId = fs.readFileSync(DEVICE_ID_PATH, 'utf8').trim();
+        if (fs.existsSync(deviceIdPath)) {
+            const savedId = fs.readFileSync(deviceIdPath, 'utf8').trim();
             if (savedId === deviceId) return deviceId;
         }
-        fs.writeFileSync(DEVICE_ID_PATH, deviceId);
+        fs.writeFileSync(deviceIdPath, deviceId);
     } catch(e) {}
     return deviceId;
 }
@@ -199,11 +108,10 @@ async function verifyDevice() {
         const device = devices.find(d => d.device_id === deviceId);
         if (!device) {
             console.log(`❌ Device not registered!`);
-            console.log(`📝 Your Device ID: ${deviceId}`);
             return false;
         }
         if (device.status !== 'active') {
-            console.log(`❌ Device inactive! Status: ${device.status}`);
+            console.log(`❌ Device inactive!`);
             return false;
         }
         console.log(`✅ Device verified!`);
@@ -260,9 +168,7 @@ function saveUsers() {
 
 function loadSubAdmins() {
     try {
-        if (fs.existsSync(SUB_ADMIN_FILE)) {
-            return JSON.parse(fs.readFileSync(SUB_ADMIN_FILE, 'utf8'));
-        }
+        if (fs.existsSync(SUB_ADMIN_FILE)) return JSON.parse(fs.readFileSync(SUB_ADMIN_FILE, 'utf8'));
     } catch(e) {}
     return [];
 }
@@ -275,9 +181,7 @@ function saveSubAdmins(admins) {
 
 function loadSubAdminNames() {
     try {
-        if (fs.existsSync(SUB_ADMIN_NAMES_FILE)) {
-            return JSON.parse(fs.readFileSync(SUB_ADMIN_NAMES_FILE, 'utf8'));
-        }
+        if (fs.existsSync(SUB_ADMIN_NAMES_FILE)) return JSON.parse(fs.readFileSync(SUB_ADMIN_NAMES_FILE, 'utf8'));
     } catch(e) {}
     return {};
 }
@@ -347,13 +251,7 @@ function addDemoUser(userId, username, name) {
     const uid = String(userId);
     if (!users[uid]) {
         const now = new Date().toISOString();
-        users[uid] = { 
-            role: "demo", 
-            name: name || "Demo User", 
-            username: username || "", 
-            firstSeen: now,
-            startDate: now
-        };
+        users[uid] = { role: "demo", name: name || "Demo User", username: username || "", firstSeen: now, startDate: now };
         saveUsers();
         return true;
     }
@@ -368,16 +266,7 @@ function addPremiumUser(userId, name = "User", days = 30) {
     const formattedExpiry = expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
     
     if (!users[uid]) {
-        users[uid] = { 
-            role: "premium", 
-            name: name, 
-            addedAt: now,
-            premiumStartDate: now,
-            expiry: expiry,
-            expiryFormatted: formattedExpiry,
-            firstSeen: now,
-            startDate: now
-        };
+        users[uid] = { role: "premium", name: name, addedAt: now, premiumStartDate: now, expiry: expiry, expiryFormatted: formattedExpiry, firstSeen: now, startDate: now };
         saveUsers();
         return formattedExpiry;
     }
@@ -414,11 +303,10 @@ function getAllUsersList() {
     for (const [uid, data] of Object.entries(users)) {
         if (uid !== String(ADMIN_ID) && !subAdmins.includes(uid)) {
             if (data.role === "premium") {
-                let daysLeft = 0;
-                let expiryText = "N/A";
+                let daysLeft = 0, expiryText = "N/A";
                 if (data.expiry) {
                     daysLeft = Math.ceil((data.expiry - Date.now()) / (24 * 60 * 60 * 1000));
-                    expiryText = data.expiryFormatted || new Date(data.expiry).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+                    expiryText = data.expiryFormatted;
                 }
                 premiumUsers.push({ userId: uid, name: data.name || "User", expiry: expiryText, daysLeft: daysLeft });
             } else if (data.role === "demo") {
@@ -443,8 +331,7 @@ function getAllUsersList() {
             msg += `⏳ Validity: Lifetime\n\n`;
         }
     } else {
-        msg += "🔰_____SUB-ADMINS PANEL_____🔰\n\n";
-        msg += "❌ No Sub-Admins Found\n\n";
+        msg += "🔰_____SUB-ADMINS PANEL_____🔰\n\n❌ No Sub-Admins Found\n\n";
     }
     
     if (premiumUsers.length > 0) {
@@ -455,8 +342,7 @@ function getAllUsersList() {
             msg += `📅 Exp: ${user.expiry} | ⏳ ${daysText}\n\n`;
         }
     } else {
-        msg += "💎_____PREMIUM USERS_____💎\n\n";
-        msg += "❌ No Premium Users Found\n\n";
+        msg += "💎_____PREMIUM USERS_____💎\n\n❌ No Premium Users Found\n\n";
     }
     
     if (demoUsers.length > 0) {
@@ -467,8 +353,7 @@ function getAllUsersList() {
             count++;
         }
     } else {
-        msg += "❇️ _____DEMO USERS_____❇️\n\n";
-        msg += "❌ No Demo Users Found\n\n";
+        msg += "❇️ _____DEMO USERS_____❇️\n\n❌ No Demo Users Found\n\n";
     }
     
     msg += "═════════════\n";
@@ -481,8 +366,7 @@ function getAllUsersList() {
 
 function escapeMarkdown(text) {
     if (!text) return '';
-    const specialChars = /[_*[\]()~`>#+\-=|{}.!]/g;
-    return text.replace(specialChars, '\\$&');
+    return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
 }
 
 function getUserInfo(userId, firstName, lastName, username) {
@@ -519,11 +403,10 @@ function updateLiveCache(cliTarget, newResults) {
     const stats = {};
     for (const item of allResults) {
         const range = item.range;
-        const cli = item.cli;
-        const foundTime = new Date(item.found_at);
-        if (!stats[range]) stats[range] = { hits: 0, clis: new Set(), lastSeen: item.found_at, lastSeenTime: foundTime };
+        if (!stats[range]) stats[range] = { hits: 0, clis: new Set(), lastSeen: item.found_at, lastSeenTime: new Date(item.found_at) };
         stats[range].hits++;
-        stats[range].clis.add(cli);
+        stats[range].clis.add(item.cli);
+        const foundTime = new Date(item.found_at);
         if (foundTime > stats[range].lastSeenTime) { stats[range].lastSeen = item.found_at; stats[range].lastSeenTime = foundTime; }
     }
     
@@ -539,8 +422,6 @@ function updateLiveCache(cliTarget, newResults) {
     return globalProcessedData;
 }
 
-function getLiveResults(limit = 50) { return globalProcessedData.slice(0, limit); }
-
 function getTimeBasedResults(minutes, limit = 50) {
     const cutoff = Date.now() - minutes * 60 * 1000;
     const stats = {};
@@ -549,11 +430,10 @@ function getTimeBasedResults(minutes, limit = 50) {
     
     for (const item of allResults) {
         const range = item.range;
-        const cli = item.cli;
-        const foundTime = new Date(item.found_at);
-        if (!stats[range]) stats[range] = { hits: 0, clis: new Set(), lastSeen: item.found_at, lastSeenTime: foundTime };
+        if (!stats[range]) stats[range] = { hits: 0, clis: new Set(), lastSeen: item.found_at, lastSeenTime: new Date(item.found_at) };
         stats[range].hits++;
-        stats[range].clis.add(cli);
+        stats[range].clis.add(item.cli);
+        const foundTime = new Date(item.found_at);
         if (foundTime > stats[range].lastSeenTime) { stats[range].lastSeen = item.found_at; stats[range].lastSeenTime = foundTime; }
     }
     
@@ -650,12 +530,14 @@ function formatResult(rangesData, title, timeWindow, totalHits = null, isDemo = 
         msg += "No data found.\n\n";
     }
     msg += `───────────────\n📈 Total Hits: ${totalHits}\n───────────────\n💡 Tap any range name to copy it`;
-    if (isDemo) msg += `\n\n───────────────\n✨ **PREMIUM FEATURES** ✨\n───────────────\n• 🟢 Live Range Auto-Refresh\n• 📊 Advanced Analytics\n• 🔍 Country Wise Search\n• 🏆 Most Hit Analysis\n───────────────\n🔒 **UPGRADE TO PREMIUM**`;
+    if (isDemo) {
+        msg += `\n\n───────────────\n✨ **PREMIUM FEATURES** ✨\n───────────────\n• 🟢 Live Range Auto-Refresh\n• 📊 Advanced Analytics\n• 🔍 Country Wise Search\n• 🏆 Most Hit Analysis\n───────────────\n🔒 **UPGRADE TO PREMIUM**`;
+    }
     return msg;
 }
 
-// ======================= FAST PLAYWRIGHT SCANNER =======================
-async function fastLoginToOrange(page, browserId) {
+// ======================= PLAYWRIGHT SCANNER =======================
+async function loginToOrange(page, browserId) {
     try {
         console.log(`🌐 Browser ${browserId}: Logging in...`);
         await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -677,8 +559,14 @@ async function fastLoginToOrange(page, browserId) {
         if (loginBtn) await loginBtn.click();
         else await page.keyboard.press('Enter');
         
-        console.log(`⏳ Browser ${browserId}: Waiting ${LOGIN_WAIT_MS/1000} seconds...`);
+        console.log(`⏳ Browser ${browserId}: Waiting after login...`);
         await page.waitForTimeout(LOGIN_WAIT_MS);
+        
+        try {
+            const viewport = page.viewportSize();
+            await page.mouse.click(viewport.width / 2, viewport.height / 2);
+        } catch(e) {}
+        
         console.log(`✅ Browser ${browserId}: Login successful!`);
         return true;
     } catch (e) {
@@ -687,11 +575,12 @@ async function fastLoginToOrange(page, browserId) {
     }
 }
 
-async function fastScanSingleTarget(page, target, browserId) {
+async function scanSingleTarget(page, target, browserId) {
     try {
         await page.goto(CLI_ACCESS_URL, { waitUntil: "domcontentloaded", timeout: SCAN_TIMEOUT_MS });
         await page.waitForTimeout(1000);
         await page.waitForSelector('#CLI', { timeout: 10000 });
+        
         await page.click('#CLI', { clickCount: 3 });
         await page.keyboard.press('Backspace');
         await page.type('#CLI', target, { delay: 20 });
@@ -720,6 +609,8 @@ async function fastScanSingleTarget(page, target, browserId) {
         if (ranges.length > 0) {
             console.log(`✅ Browser ${browserId}: ${target} → Found ${ranges.length} ranges`);
             updateLiveCache(target, ranges);
+        } else {
+            console.log(`⚠️ Browser ${browserId}: ${target} → Found 0 ranges`);
         }
         return ranges;
     } catch (e) {
@@ -728,7 +619,7 @@ async function fastScanSingleTarget(page, target, browserId) {
     }
 }
 
-async function startFastBrowserScanner(browserId, assignedTargets) {
+async function startBrowserScanner(browserId, assignedTargets) {
     let browser = null, context = null, page = null;
     let targetIndex = 0, loginRetryCount = 0, maxLoginRetries = 5;
     
@@ -746,10 +637,12 @@ async function startFastBrowserScanner(browserId, assignedTargets) {
                 });
                 page = await context.newPage();
                 
-                const loginSuccess = await fastLoginToOrange(page, browserId);
+                const loginSuccess = await loginToOrange(page, browserId);
                 if (!loginSuccess) {
                     loginRetryCount++;
+                    console.log(`⚠️ Browser ${browserId}: Login failed (attempt ${loginRetryCount}/${maxLoginRetries})`);
                     if (loginRetryCount >= maxLoginRetries) {
+                        console.log(`❌ Browser ${browserId}: Max login retries reached, restarting...`);
                         await browser.close();
                         browser = null;
                         loginRetryCount = 0;
@@ -767,7 +660,7 @@ async function startFastBrowserScanner(browserId, assignedTargets) {
             const target = assignedTargets[targetIndex % assignedTargets.length];
             targetIndex++;
             console.log(`🔍 Browser ${browserId}: Scanning ${target}...`);
-            await fastScanSingleTarget(page, target, browserId);
+            await scanSingleTarget(page, target, browserId);
             await new Promise(r => setTimeout(r, SCAN_INTERVAL_MS));
         } catch (e) {
             console.log(`❌ Browser ${browserId}: ${e.message}, restarting...`);
@@ -791,7 +684,7 @@ function startMultiBrowserScanner() {
         const endIdx = Math.min(startIdx + perBrowser, cliTargets.length);
         const assigned = cliTargets.slice(startIdx, endIdx);
         console.log(`📌 Browser ${i+1}: assigned ${assigned.length} targets`);
-        startFastBrowserScanner(i+1, assigned);
+        startBrowserScanner(i+1, assigned);
     }
 }
 
@@ -1054,16 +947,14 @@ bot.hears("📊 DEMO RESULTS", async (ctx) => {
 });
 
 bot.hears("✅ UPGRADE TO PREMIUM", async (ctx) => {
-    const premiumMsg = `💎 **Active Premium Plan** 💎\n━━━━━━━━━━━━━━━━━━\n${getPriceDisplay()}\n\n⚡ Fast Access • Premium Features\n🔒 Secure Payment System\n\n━━━━━━━━━━━━━━━━━━\n👇 **Choose Payment Method**`;
-    await ctx.reply(premiumMsg, { parse_mode: "Markdown", reply_markup: getPaymentMethodsKeyboard() });
+    await ctx.reply(PAYMENT_MESSAGES.header, { parse_mode: "Markdown", reply_markup: getPaymentMethodsKeyboard() });
 });
 
 for (const [key, method] of Object.entries(PAYMENT_METHODS)) {
     bot.hears(`${method.emoji} ${method.name}`, async (ctx) => {
         const uid = ctx.from.id;
         userPaymentState[uid] = { step: "waiting_ss", method: key.toLowerCase() };
-        const msg = `${method.emoji} **${method.name} Payment**\n━━━━━━━━━━━━━━━━━━\n💵 Send ${method.amount} ${method.currency} to:\n\`${method.number || method.id}\`\n\n📸 **Send a screenshot of your transaction**\n\n⚠️ Only image supported\n\nAfter sending screenshot, send your transaction ID or number.`;
-        await ctx.reply(msg, { parse_mode: "Markdown", reply_markup: getBackKeyboard() });
+        await ctx.reply(PAYMENT_MESSAGES.getPaymentInstruction(key), { parse_mode: "Markdown", reply_markup: getBackKeyboard() });
     });
 }
 
@@ -1085,8 +976,8 @@ bot.on(":photo", async (ctx) => {
             method: paymentState.method
         };
         userPaymentState[uid] = { step: "waiting_number", method: paymentState.method };
-        await ctx.reply(`📸 **Screenshot received!**\n\nNow send your **Transaction ID/Number**:\n\n⚠️ Any number or text is accepted.\nExample: \`2467\` or \`TRX123456\``, { parse_mode: "Markdown", reply_markup: getBackKeyboard() });
-    } catch (e) { console.error("Photo handler error:", e.message); await ctx.reply("⚠️ An error occurred. Please try again."); }
+        await ctx.reply(PAYMENT_MESSAGES.screenshot_received, { parse_mode: "Markdown", reply_markup: getBackKeyboard() });
+    } catch (e) { console.error("Photo handler error:", e.message); await ctx.reply("⚠️ An error occurred."); }
 });
 
 bot.on(":text", async (ctx) => {
@@ -1098,15 +989,15 @@ bot.on(":text", async (ctx) => {
         
         if (paymentState && paymentState.step === "waiting_number" && paymentData && !paymentData.transactionId) {
             if (!text || text.length < 1) {
-                await ctx.reply("❌ **Invalid input!**\n\nPlease send a valid Transaction ID / Number:\nExample: `2467` or `TRX123456`", { parse_mode: "Markdown" });
+                await ctx.reply(PAYMENT_MESSAGES.invalid_input, { parse_mode: "Markdown" });
                 return;
             }
             paymentData.transactionId = text;
             userPaymentData[uid] = paymentData;
-            await ctx.reply("✅ **Submitted Successfully!**\n⏳ Wait for Admin approval.\n\nYou will be notified once approved.", { parse_mode: "Markdown" });
+            await ctx.reply(PAYMENT_MESSAGES.success, { parse_mode: "Markdown" });
             
-            const adminMsg = `🔔 ══ PAYMENT REQUEST ══ 🔔\n━━━━━━━━━━━━━━━━━━\n👤 Name: ${escapeMarkdown(paymentData.name)}\n🆔 User ID: \`${uid}\`\n📛 Username: @${paymentData.username}\n💳 Method: ${paymentData.method.toUpperCase()}\n🔢 Trx ID: \`${text}\`\n\n👇 **Action:**`;
-            const approveKeyboard = new InlineKeyboard().row(InlineKeyboard.text("✅ Approve", `approve_${uid}`), InlineKeyboard.text("❌ Reject", `reject_${uid}`));
+            const adminMsg = `${ADMIN_NOTIFICATION.header}\n${ADMIN_NOTIFICATION.user_line.replace('{name}', escapeMarkdown(paymentData.name)).replace('{user_id}', uid).replace('{username}', paymentData.username)}\n${ADMIN_NOTIFICATION.method_line.replace('{method}', paymentData.method.toUpperCase())}\n${ADMIN_NOTIFICATION.transaction_line.replace('{transaction_id}', text)}\n${ADMIN_NOTIFICATION.action_line}`;
+            const approveKeyboard = new InlineKeyboard().row(InlineKeyboard.text(BUTTON_LABELS.approve, `approve_${uid}`), InlineKeyboard.text(BUTTON_LABELS.reject, `reject_${uid}`));
             await ctx.api.sendPhoto(ADMIN_ID, paymentData.photoId, { caption: adminMsg, parse_mode: "Markdown", reply_markup: approveKeyboard });
             delete userPaymentState[uid];
             delete userPaymentData[uid];
@@ -1119,10 +1010,10 @@ bot.on(":text", async (ctx) => {
         if (broadcast && broadcast.step === "waiting_message") {
             const targetType = broadcast.type;
             let targetName = targetType === "premium" ? "PREMIUM USERS" : (targetType === "demo" ? "DEMO USERS" : "ALL USERS");
-            await ctx.reply(`📢 **Sending broadcast to ${targetName}...**\n\n⏳ Please wait...`, { parse_mode: "Markdown" });
+            await ctx.reply(`📢 **Sending broadcast to ${targetName}...**`, { parse_mode: "Markdown" });
             const result = await sendBroadcast(ctx, targetType, text);
             delete broadcastState[uid];
-            await ctx.reply(`✅ **Broadcast Complete!**\n\n📊 Target: ${targetName}\n✅ Sent: ${result.successCount} users\n❌ Failed: ${result.failCount} users\n📬 Total: ${result.total} users\n\n👑 Use /start to return to main menu.`, { parse_mode: "Markdown" });
+            await ctx.reply(`✅ **Broadcast Complete!**\n\n📊 Target: ${targetName}\n✅ Sent: ${result.successCount} users\n❌ Failed: ${result.failCount} users\n📬 Total: ${result.total} users`, { parse_mode: "Markdown" });
             return;
         }
         
@@ -1163,7 +1054,7 @@ bot.on(":text", async (ctx) => {
             if (removeSubAdmin(text)) await ctx.reply(`✅ User \`${text}\` removed from SUB-ADMIN.`, { parse_mode: "Markdown" });
             else await ctx.reply(`⚠️ User \`${text}\` is not a SUB-ADMIN.`, { parse_mode: "Markdown" });
         }
-    } catch (e) { console.error("Text input error:", e.message); await ctx.reply("⚠️ An error occurred. Please try again."); }
+    } catch (e) { console.error("Text input error:", e.message); await ctx.reply("⚠️ An error occurred."); }
 });
 
 bot.hears("👑 ADMIN PANEL", async (ctx) => {
@@ -1182,8 +1073,7 @@ bot.hears("🔙 BACK TO MAIN", async (ctx) => {
 });
 
 bot.hears("🔙 Back", async (ctx) => {
-    const premiumMsg = `💎 **Active Premium Plan** 💎\n━━━━━━━━━━━━━━━━━━\n${getPriceDisplay()}\n\n⚡ Fast Access • Premium Features\n🔒 Secure Payment System\n\n━━━━━━━━━━━━━━━━━━\n👇 **Choose Payment Method**`;
-    await ctx.reply(premiumMsg, { parse_mode: "Markdown", reply_markup: getPaymentMethodsKeyboard() });
+    await ctx.reply(PAYMENT_MESSAGES.header, { parse_mode: "Markdown", reply_markup: getPaymentMethodsKeyboard() });
 });
 
 bot.hears("✅ ADD USER", async (ctx) => {
@@ -1253,14 +1143,13 @@ bot.hears("❄️ REMOVE SUB-ADMIN", async (ctx) => {
     await ctx.reply("⚠️ **Type User ID to remove from SUB-ADMIN:**\nExample: `123456789`\n\n/cancel to stop");
 });
 
-// ==================== INLINE CALLBACK HANDLERS ====================
 bot.callbackQuery(/^approve_(.+)$/, async (ctx) => {
     if (getUserRole(ctx.from.id) !== "admin") { await ctx.answerCallbackQuery("🚫 Only admin can approve!"); return; }
     const userId = ctx.match[1];
     const paymentData = userPaymentData[userId];
     if (!paymentData) { await ctx.answerCallbackQuery("Payment request not found!"); return; }
     const expiryFormatted = addPremiumUser(userId, paymentData.name || "User", PREMIUM_PLAN.duration);
-    try { await ctx.api.sendMessage(userId, `🎉 **PAYMENT ACCEPTED!**\n\n✅ Your Premium Subscription is now **ACTIVE**!\n📅 Valid until: ${expiryFormatted}\n\n🚀 You can now access all Live Features.\nUse /start to access the menu.`, { parse_mode: "Markdown" }); } catch(e) {}
+    try { await ctx.api.sendMessage(userId, PAYMENT_MESSAGES.approved, { parse_mode: "Markdown" }); } catch(e) {}
     const currentCaption = ctx.message.caption || "";
     await ctx.editMessageCaption(currentCaption + `\n\n✅ **APPROVED & ADDED**\n📅 Expiry: ${expiryFormatted}`, { parse_mode: "Markdown" });
     await ctx.answerCallbackQuery("✅ Approved!");
@@ -1271,7 +1160,7 @@ bot.callbackQuery(/^reject_(.+)$/, async (ctx) => {
     if (getUserRole(ctx.from.id) !== "admin") { await ctx.answerCallbackQuery("🚫 Only admin can reject!"); return; }
     const userId = ctx.match[1];
     const paymentData = userPaymentData[userId];
-    try { await ctx.api.sendMessage(userId, `❌ **Your payment request has been rejected.**\n\nPlease contact admin if needed.\nContact: ${ADMIN_USERNAME}`, { parse_mode: "Markdown" }); } catch(e) {}
+    try { await ctx.api.sendMessage(userId, PAYMENT_MESSAGES.rejected.replace('{admin_username}', ADMIN_USERNAME), { parse_mode: "Markdown" }); } catch(e) {}
     const currentCaption = ctx.message.caption || "";
     await ctx.editMessageCaption(currentCaption + `\n\n❌ **REJECTED**\n\nPayment request has been rejected.`, { parse_mode: "Markdown" });
     await ctx.answerCallbackQuery("❌ Rejected!");
@@ -1284,8 +1173,6 @@ async function main() {
     console.log("🤖 Range X Orange Bot v4.0");
     console.log("=".repeat(60));
     
-    await loadDataFromDrive();
-    
     console.log("\n🔐 Checking device authorization...");
     const isVerified = await verifyDevice();
     if (!isVerified) { console.log("\n❌ Device not authorized! Bot cannot run."); process.exit(1); }
@@ -1293,6 +1180,9 @@ async function main() {
     console.log(`\n👑 Admin ID: ${ADMIN_ID}`);
     console.log(`🔥 Chrome Browsers: ${BROWSER_COUNT}`);
     console.log(`🖥️ Headless Mode: ${HEADLESS_MODE ? "ON" : "OFF"}`);
+    console.log(`⏱️ Scan Interval: ${SCAN_INTERVAL_MS}ms`);
+    console.log(`⏱️ Scan Timeout: ${SCAN_TIMEOUT_MS}ms`);
+    console.log(`⏱️ Login Wait: ${LOGIN_WAIT_MS/1000} seconds`);
     console.log(`📁 Data Directory: ${DATA_DIR}`);
     console.log(`🔄 Live Auto Refresh: ${LIVE_AUTO_REFRESH_ENABLED ? "ON" : "OFF"}`);
     console.log(`✅ Bot is running with Polling\n`);
