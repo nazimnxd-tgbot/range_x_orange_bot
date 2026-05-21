@@ -1,5 +1,5 @@
 // ======================= TELEGRAM BOT CONFIGURATION =======================
-export const BOT_TOKEN = "8748227133:AAH55hZzwngGjbDBGT3x-noBVK7FGtNbS10";
+export const BOT_TOKEN = "8748227133:AAGoaJStAZIp5e-0W9gKXIF5jLLoa1ZZOtg";
 export const ADMIN_ID = 7064572216;
 export const ADMIN_USERNAME = "@xDnaZim";
 
