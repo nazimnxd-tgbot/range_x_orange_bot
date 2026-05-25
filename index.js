@@ -26,6 +26,9 @@ import {
     DEVICE_SHEET_URL,
     LOGIN_URL,
     CLI_ACCESS_URL,
+    USER_DB_FILE,
+    LOG_FILE_PATH,
+    BOT_ONLINE_NOTIFICATION,
     LIVE_RESULT_LIMIT,
     LIVE_COUNTRY_SUMMARY_LIMIT,
     LIVE_UPDATE_INTERVAL_SECONDS,
@@ -54,37 +57,31 @@ import {
     DEMO_COUNTRY_SUMMARY_LIMIT,
     DEMO_MASK_MODE,
     RANGES_PER_CLI
-} from './config/env.js';
+} from './env.js';
 
+// Import payment configuration
 import { 
     PRICE_SETTINGS, 
     PREMIUM_PLAN, 
     PAYMENT_METHODS, 
     PAYMENT_MESSAGES, 
     ADMIN_NOTIFICATION, 
-    BUTTON_LABELS 
-} from './config/paymentenv.js';
+    BUTTON_LABELS,
+    getPriceDisplay 
+} from './paymentenv.js';
 
-import { getCliTargets } from './config/cli.js';
-import { getCountryFlag, getCountryNameFromRange } from './config/countries.js';
+import { getCliTargets } from './cli.js';
+import { getCountryFlag, getCountryNameFromRange } from './countries.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ======================= DATA DIRECTORY =======================
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
-const USER_DB_PATH = path.join(DATA_DIR, 'subscription_db.json');
-const SUB_ADMIN_FILE = path.join(DATA_DIR, 'sub_admins.json');
-const SUB_ADMIN_NAMES_FILE = path.join(DATA_DIR, 'sub_admin_names.json');
-const LOG_PATH = path.join(DATA_DIR, 'bot_log.txt');
-
 // ======================= DEVICE VERIFICATION =======================
 function getDeviceId() {
-    const raw = os.platform() + os.hostname() + os.arch();
+    const raw = os.platform() + os.hostname() + os.arch() + (os.cpus()[0]?.model || '');
     const deviceId = crypto.createHash('md5').update(raw).digest('hex');
-    const deviceIdPath = path.join(DATA_DIR, '.device_id');
+    
+    const deviceIdPath = path.join(__dirname, '.device_id');
     try {
         if (fs.existsSync(deviceIdPath)) {
             const savedId = fs.readFileSync(deviceIdPath, 'utf8').trim();
@@ -97,27 +94,36 @@ function getDeviceId() {
 
 async function verifyDevice() {
     if (!DEVICE_VERIFICATION_ENABLED) {
-        console.log(`⚠️ Device verification is DISABLED`);
+        console.log(`\x1b[33m⚠️ Device verification is DISABLED\x1b[0m`);
         return true;
     }
+    
     try {
         const deviceId = getDeviceId();
-        console.log(`🔑 Device ID: ${deviceId}`);
+        console.log(`\x1b[36m🔑 Device ID: ${deviceId}\x1b[0m`);
+        
         const response = await axios.get(DEVICE_SHEET_URL);
         const devices = response.data;
+        
         const device = devices.find(d => d.device_id === deviceId);
+        
         if (!device) {
-            console.log(`❌ Device not registered!`);
+            console.log(`\x1b[31m❌ Device not registered!\x1b[0m`);
+            console.log(`\x1b[33m📝 Your Device ID: ${deviceId}\x1b[0m`);
+            console.log(`\x1b[33m📞 Contact admin to activate\x1b[0m`);
             return false;
         }
+        
         if (device.status !== 'active') {
-            console.log(`❌ Device inactive!`);
+            console.log(`\x1b[31m❌ Device inactive! Status: ${device.status}\x1b[0m`);
             return false;
         }
-        console.log(`✅ Device verified!`);
+        
+        console.log(`\x1b[32m✅ Device verified! Status: ${device.status}\x1b[0m`);
         return true;
+        
     } catch (error) {
-        console.log(`❌ Device verification failed: ${error.message}`);
+        console.log(`\x1b[31m❌ Device verification failed: ${error.message}\x1b[0m`);
         return false;
     }
 }
@@ -141,6 +147,14 @@ let liveDataCache = {};
 let globalProcessedData = [];
 
 // ======================= FILE OPERATIONS =======================
+const SYSTEM_DATA_DIR = path.join(os.homedir(), "orange_bot_data");
+if (!fs.existsSync(SYSTEM_DATA_DIR)) fs.mkdirSync(SYSTEM_DATA_DIR, { recursive: true });
+
+const USER_DB_PATH = path.join(SYSTEM_DATA_DIR, "subscription_db.json");
+const SUB_ADMIN_FILE = path.join(SYSTEM_DATA_DIR, "sub_admins.json");
+const SUB_ADMIN_NAMES_FILE = path.join(SYSTEM_DATA_DIR, "sub_admin_names.json");
+const LOG_PATH = path.join(SYSTEM_DATA_DIR, "bot_log.txt");
+
 function loadUsers() {
     try {
         if (fs.existsSync(USER_DB_PATH)) {
@@ -154,10 +168,11 @@ function loadUsers() {
                 data.expiry = null;
                 changed = true;
             }
+            if (data.firstStartNotified) firstStartNotified.add(uid);
         }
         if (changed) saveUsers();
     } catch(e) { users = {}; }
-    console.log(`✅ Loaded ${Object.keys(users).length} users`);
+    console.log(`\x1b[32m✅ Loaded ${Object.keys(users).length} users\x1b[0m`);
 }
 
 function saveUsers() {
@@ -168,7 +183,9 @@ function saveUsers() {
 
 function loadSubAdmins() {
     try {
-        if (fs.existsSync(SUB_ADMIN_FILE)) return JSON.parse(fs.readFileSync(SUB_ADMIN_FILE, 'utf8'));
+        if (fs.existsSync(SUB_ADMIN_FILE)) {
+            return JSON.parse(fs.readFileSync(SUB_ADMIN_FILE, 'utf8'));
+        }
     } catch(e) {}
     return [];
 }
@@ -181,7 +198,9 @@ function saveSubAdmins(admins) {
 
 function loadSubAdminNames() {
     try {
-        if (fs.existsSync(SUB_ADMIN_NAMES_FILE)) return JSON.parse(fs.readFileSync(SUB_ADMIN_NAMES_FILE, 'utf8'));
+        if (fs.existsSync(SUB_ADMIN_NAMES_FILE)) {
+            return JSON.parse(fs.readFileSync(SUB_ADMIN_NAMES_FILE, 'utf8'));
+        }
     } catch(e) {}
     return {};
 }
@@ -233,8 +252,10 @@ function logToFile(message) {
 function getUserRole(userId) {
     const uid = String(userId);
     if (uid === String(ADMIN_ID)) return "admin";
+    
     const subAdmins = loadSubAdmins();
     if (subAdmins.includes(uid)) return "sub_admin";
+    
     if (users[uid]?.role === "premium") {
         if (users[uid].expiry && users[uid].expiry < Date.now()) {
             users[uid].role = "demo";
@@ -251,7 +272,13 @@ function addDemoUser(userId, username, name) {
     const uid = String(userId);
     if (!users[uid]) {
         const now = new Date().toISOString();
-        users[uid] = { role: "demo", name: name || "Demo User", username: username || "", firstSeen: now, startDate: now };
+        users[uid] = { 
+            role: "demo", 
+            name: name || "Demo User", 
+            username: username || "", 
+            firstSeen: now,
+            startDate: now
+        };
         saveUsers();
         return true;
     }
@@ -266,7 +293,16 @@ function addPremiumUser(userId, name = "User", days = 30) {
     const formattedExpiry = expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
     
     if (!users[uid]) {
-        users[uid] = { role: "premium", name: name, addedAt: now, premiumStartDate: now, expiry: expiry, expiryFormatted: formattedExpiry, firstSeen: now, startDate: now };
+        users[uid] = { 
+            role: "premium", 
+            name: name, 
+            addedAt: now,
+            premiumStartDate: now,
+            expiry: expiry,
+            expiryFormatted: formattedExpiry,
+            firstSeen: now,
+            startDate: now
+        };
         saveUsers();
         return formattedExpiry;
     }
@@ -303,14 +339,23 @@ function getAllUsersList() {
     for (const [uid, data] of Object.entries(users)) {
         if (uid !== String(ADMIN_ID) && !subAdmins.includes(uid)) {
             if (data.role === "premium") {
-                let daysLeft = 0, expiryText = "N/A";
+                let daysLeft = 0;
+                let expiryText = "N/A";
                 if (data.expiry) {
                     daysLeft = Math.ceil((data.expiry - Date.now()) / (24 * 60 * 60 * 1000));
-                    expiryText = data.expiryFormatted;
+                    expiryText = data.expiryFormatted || new Date(data.expiry).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
                 }
-                premiumUsers.push({ userId: uid, name: data.name || "User", expiry: expiryText, daysLeft: daysLeft });
+                premiumUsers.push({ 
+                    userId: uid, 
+                    name: data.name || "User", 
+                    expiry: expiryText, 
+                    daysLeft: daysLeft
+                });
             } else if (data.role === "demo") {
-                demoUsers.push({ userId: uid, name: data.name || "Demo User" });
+                demoUsers.push({ 
+                    userId: uid, 
+                    name: data.name || "Demo User"
+                });
             }
         }
     }
@@ -318,6 +363,7 @@ function getAllUsersList() {
     premiumUsers.sort((a, b) => a.daysLeft - b.daysLeft);
     
     let msg = "";
+    
     msg += "🤷‍♂️______ALL USER LIST ______ 🤷‍♂️\n\n";
     msg += "    ✅ _____BOT OWNER_____✅\n\n";
     msg += `👤 UID: \`${ADMIN_ID}\` | Name: Owner\n`;
@@ -331,7 +377,8 @@ function getAllUsersList() {
             msg += `⏳ Validity: Lifetime\n\n`;
         }
     } else {
-        msg += "🔰_____SUB-ADMINS PANEL_____🔰\n\n❌ No Sub-Admins Found\n\n";
+        msg += "🔰_____SUB-ADMINS PANEL_____🔰\n\n";
+        msg += "❌ No Sub-Admins Found\n\n";
     }
     
     if (premiumUsers.length > 0) {
@@ -342,7 +389,8 @@ function getAllUsersList() {
             msg += `📅 Exp: ${user.expiry} | ⏳ ${daysText}\n\n`;
         }
     } else {
-        msg += "💎_____PREMIUM USERS_____💎\n\n❌ No Premium Users Found\n\n";
+        msg += "💎_____PREMIUM USERS_____💎\n\n";
+        msg += "❌ No Premium Users Found\n\n";
     }
     
     if (demoUsers.length > 0) {
@@ -353,7 +401,8 @@ function getAllUsersList() {
             count++;
         }
     } else {
-        msg += "❇️ _____DEMO USERS_____❇️\n\n❌ No Demo Users Found\n\n";
+        msg += "❇️ _____DEMO USERS_____❇️\n\n";
+        msg += "❌ No Demo Users Found\n\n";
     }
     
     msg += "═════════════\n";
@@ -361,12 +410,14 @@ function getAllUsersList() {
     msg += `🛡 Total Sub-Admins: ${subAdmins.length} Users\n`;
     msg += `🆓 Total Demo: ${demoUsers.length} Users\n`;
     msg += "═════════════";
+    
     return msg;
 }
 
 function escapeMarkdown(text) {
     if (!text) return '';
-    return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+    const specialChars = /[_*[\]()~`>#+\-=|{}.!]/g;
+    return text.replace(specialChars, '\\$&');
 }
 
 function getUserInfo(userId, firstName, lastName, username) {
@@ -377,68 +428,171 @@ function getUserInfo(userId, firstName, lastName, username) {
     const userData = users[String(userId)];
     
     if (role === "admin") {
-        return { name, username: uname || ADMIN_USERNAME.slice(1), userId, status: "👑 ADMIN OWNER", role: "admin", accessLevel: "FULL CONTROL", panel: "ADMIN DASHBOARD", security: "MAXIMUM", systemAccess: "System Owner Access Enabled" };
+        return { 
+            name: name,
+            username: uname || ADMIN_USERNAME.slice(1),
+            userId: userId,
+            status: "👑 ADMIN OWNER",
+            role: "admin",
+            accessLevel: "FULL CONTROL",
+            panel: "ADMIN DASHBOARD",
+            security: "MAXIMUM",
+            systemAccess: "System Owner Access Enabled"
+        };
     }
     if (role === "sub_admin") {
         const adminName = getSubAdminName(String(userId));
-        return { name: adminName || name, username: uname || "Sub-Admin", userId, status: "🛡️ SUB-ADMIN", role: "sub_admin", accessLevel: "MODERATE CONTROL", panel: "SUB-ADMIN DASHBOARD", security: "HIGH", systemAccess: "Limited Admin Access Enabled" };
+        return { 
+            name: adminName || name,
+            username: uname || "Sub-Admin",
+            userId: userId,
+            status: "🛡️ SUB-ADMIN",
+            role: "sub_admin",
+            accessLevel: "MODERATE CONTROL",
+            panel: "SUB-ADMIN DASHBOARD",
+            security: "HIGH",
+            systemAccess: "Limited Admin Access Enabled"
+        };
     }
     if (role === "premium") {
         const daysLeft = userData?.expiry ? Math.ceil((userData.expiry - Date.now()) / (24 * 60 * 60 * 1000)) : 30;
-        const startDate = userData?.premiumStartDate ? new Date(userData.premiumStartDate).toLocaleDateString() : "N/A";
-        const expiryDate = userData?.expiryFormatted || "N/A";
-        return { name: userData?.name ? escapeMarkdown(userData.name) : name, username: uname || "Premium User", userId, status: `💎 PREMIUM (${daysLeft} days left)`, role: "premium", startDate, expiryDate, daysLeft, liveRange: "UNLOCKED", analytics: "UNLOCKED", features: "FULL ACCESS" };
+        const startDate = userData?.premiumStartDate ? new Date(userData.premiumStartDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' }) : "N/A";
+        const expiryDate = userData?.expiryFormatted || (userData?.expiry ? new Date(userData.expiry).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' }) : "N/A");
+        
+        return { 
+            name: userData?.name ? escapeMarkdown(userData.name) : name,
+            username: uname || "Premium User",
+            userId: userId,
+            status: `💎 PREMIUM (${daysLeft} days left)`,
+            role: "premium",
+            startDate: startDate,
+            expiryDate: expiryDate,
+            daysLeft: daysLeft,
+            liveRange: "UNLOCKED",
+            analytics: "UNLOCKED",
+            features: "FULL ACCESS"
+        };
     }
-    return { name, username: uname || "Demo User", userId, status: "🎲 DEMO MODE", role: "demo", accessLevel: "LIMITED", liveData: "RESTRICTED", analytics: "LOCKED" };
+    return { 
+        name: name,
+        username: uname || "Demo User",
+        userId: userId,
+        status: "🎲 DEMO MODE",
+        role: "demo",
+        accessLevel: "LIMITED",
+        liveData: "RESTRICTED",
+        analytics: "LOCKED"
+    };
 }
 
 // ======================= LIVE CACHE DATA PROCESSING =======================
 function updateLiveCache(cliTarget, newResults) {
     delete liveDataCache[cliTarget];
-    if (newResults.length > 0) liveDataCache[cliTarget] = newResults;
+    
+    if (newResults.length > 0) {
+        liveDataCache[cliTarget] = newResults;
+    }
     
     const allResults = [];
-    for (const cli in liveDataCache) allResults.push(...liveDataCache[cli]);
+    for (const cli in liveDataCache) {
+        allResults.push(...liveDataCache[cli]);
+    }
     
     const stats = {};
     for (const item of allResults) {
         const range = item.range;
-        if (!stats[range]) stats[range] = { hits: 0, clis: new Set(), lastSeen: item.found_at, lastSeenTime: new Date(item.found_at) };
-        stats[range].hits++;
-        stats[range].clis.add(item.cli);
+        const cli = item.cli;
         const foundTime = new Date(item.found_at);
-        if (foundTime > stats[range].lastSeenTime) { stats[range].lastSeen = item.found_at; stats[range].lastSeenTime = foundTime; }
+        
+        if (!stats[range]) {
+            stats[range] = {
+                hits: 0,
+                clis: new Set(),
+                lastSeen: item.found_at,
+                lastSeenTime: foundTime
+            };
+        }
+        
+        stats[range].hits++;
+        stats[range].clis.add(cli);
+        
+        if (foundTime > stats[range].lastSeenTime) {
+            stats[range].lastSeen = item.found_at;
+            stats[range].lastSeenTime = foundTime;
+        }
     }
     
     globalProcessedData = [];
-    for (const [range, data] of Object.entries(stats)) globalProcessedData.push({ range, hits: data.hits, cliCount: data.clis.size, lastSeen: data.lastSeen });
+    for (const [range, data] of Object.entries(stats)) {
+        globalProcessedData.push({
+            range: range,
+            hits: data.hits,
+            cliCount: data.clis.size,
+            lastSeen: data.lastSeen
+        });
+    }
     globalProcessedData.sort((a, b) => b.hits - a.hits);
     
     const cutoff = Date.now() - 30 * 60 * 1000;
     for (const cli in liveDataCache) {
         liveDataCache[cli] = liveDataCache[cli].filter(item => new Date(item.found_at).getTime() > cutoff);
-        if (liveDataCache[cli].length === 0) delete liveDataCache[cli];
+        if (liveDataCache[cli].length === 0) {
+            delete liveDataCache[cli];
+        }
     }
+    
     return globalProcessedData;
+}
+
+function getLiveResults(limit = 50) {
+    return globalProcessedData.slice(0, limit);
 }
 
 function getTimeBasedResults(minutes, limit = 50) {
     const cutoff = Date.now() - minutes * 60 * 1000;
     const stats = {};
+    
     const allResults = [];
-    for (const cli in liveDataCache) for (const item of liveDataCache[cli]) if (new Date(item.found_at).getTime() > cutoff) allResults.push(item);
+    for (const cli in liveDataCache) {
+        for (const item of liveDataCache[cli]) {
+            if (new Date(item.found_at).getTime() > cutoff) {
+                allResults.push(item);
+            }
+        }
+    }
     
     for (const item of allResults) {
         const range = item.range;
-        if (!stats[range]) stats[range] = { hits: 0, clis: new Set(), lastSeen: item.found_at, lastSeenTime: new Date(item.found_at) };
-        stats[range].hits++;
-        stats[range].clis.add(item.cli);
+        const cli = item.cli;
         const foundTime = new Date(item.found_at);
-        if (foundTime > stats[range].lastSeenTime) { stats[range].lastSeen = item.found_at; stats[range].lastSeenTime = foundTime; }
+        
+        if (!stats[range]) {
+            stats[range] = {
+                hits: 0,
+                clis: new Set(),
+                lastSeen: item.found_at,
+                lastSeenTime: foundTime
+            };
+        }
+        
+        stats[range].hits++;
+        stats[range].clis.add(cli);
+        
+        if (foundTime > stats[range].lastSeenTime) {
+            stats[range].lastSeen = item.found_at;
+            stats[range].lastSeenTime = foundTime;
+        }
     }
     
     const results = [];
-    for (const [range, data] of Object.entries(stats)) results.push({ range, hits: data.hits, cliCount: data.clis.size, lastSeen: data.lastSeen });
+    for (const [range, data] of Object.entries(stats)) {
+        results.push({
+            range: range,
+            hits: data.hits,
+            cliCount: data.clis.size,
+            lastSeen: data.lastSeen
+        });
+    }
     results.sort((a, b) => b.hits - a.hits);
     return results.slice(0, limit);
 }
@@ -447,19 +601,37 @@ function searchByKeyword(keyword, minutes = 30, limit = 20) {
     const kw = keyword.toLowerCase();
     const cutoff = Date.now() - minutes * 60 * 1000;
     const stats = {};
+    
     const allResults = [];
-    for (const cli in liveDataCache) for (const item of liveDataCache[cli]) if (new Date(item.found_at).getTime() > cutoff && item.range.toLowerCase().includes(kw)) allResults.push(item);
+    for (const cli in liveDataCache) {
+        for (const item of liveDataCache[cli]) {
+            if (new Date(item.found_at).getTime() > cutoff && item.range.toLowerCase().includes(kw)) {
+                allResults.push(item);
+            }
+        }
+    }
     
     for (const item of allResults) {
         const range = item.range;
-        if (!stats[range]) stats[range] = { hits: 0, clis: new Set(), lastSeen: item.found_at };
+        if (!stats[range]) {
+            stats[range] = { hits: 0, clis: new Set(), lastSeen: item.found_at };
+        }
         stats[range].hits++;
         stats[range].clis.add(item.cli);
-        if (new Date(item.found_at) > new Date(stats[range].lastSeen)) stats[range].lastSeen = item.found_at;
+        if (new Date(item.found_at) > new Date(stats[range].lastSeen)) {
+            stats[range].lastSeen = item.found_at;
+        }
     }
     
     const results = [];
-    for (const [range, data] of Object.entries(stats)) results.push({ range, hits: data.hits, cliCount: data.clis.size, lastSeen: data.lastSeen });
+    for (const [range, data] of Object.entries(stats)) {
+        results.push({
+            range: range,
+            hits: data.hits,
+            cliCount: data.clis.size,
+            lastSeen: data.lastSeen
+        });
+    }
     results.sort((a, b) => b.hits - a.hits);
     return results.slice(0, limit);
 }
@@ -467,16 +639,32 @@ function searchByKeyword(keyword, minutes = 30, limit = 20) {
 function getCountryStats(minutes) {
     const cutoff = Date.now() - minutes * 60 * 1000;
     const countryStats = {};
+    
     const allResults = [];
-    for (const cli in liveDataCache) for (const item of liveDataCache[cli]) if (new Date(item.found_at).getTime() > cutoff) allResults.push(item);
+    for (const cli in liveDataCache) {
+        for (const item of liveDataCache[cli]) {
+            if (new Date(item.found_at).getTime() > cutoff) {
+                allResults.push(item);
+            }
+        }
+    }
     
     for (const item of allResults) {
         const country = getCountryNameFromRange(item.range) || item.range.split(' ')[0] || "Unknown";
-        if (!countryStats[country]) countryStats[country] = { hits: 0, ranges: new Set() };
+        if (!countryStats[country]) {
+            countryStats[country] = { hits: 0, ranges: new Set() };
+        }
         countryStats[country].hits++;
         countryStats[country].ranges.add(item.range);
     }
-    return Object.entries(countryStats).map(([country, data]) => ({ country, hits: data.hits, rangeCount: data.ranges.size })).sort((a, b) => b.hits - a.hits);
+    
+    return Object.entries(countryStats)
+        .map(([country, data]) => ({ 
+            country, 
+            hits: data.hits, 
+            rangeCount: data.ranges.size 
+        }))
+        .sort((a, b) => b.hits - a.hits);
 }
 
 function getTimeAgo(foundTime) {
@@ -491,12 +679,18 @@ function maskRange(rangeName) {
     const parts = rangeName.split(' ');
     if (parts.length >= 3) {
         const lastPart = parts[parts.length - 1];
-        if (lastPart.length >= 3) parts[parts.length - 1] = lastPart.charAt(0) + '*'.repeat(lastPart.length - 1);
-        else if (lastPart.length === 2) parts[parts.length - 1] = lastPart.charAt(0) + '*';
-        else if (lastPart.length === 1) parts[parts.length - 1] = '*';
+        if (lastPart.length >= 3) {
+            parts[parts.length - 1] = lastPart.charAt(0) + '*'.repeat(lastPart.length - 1);
+        } else if (lastPart.length === 2) {
+            parts[parts.length - 1] = lastPart.charAt(0) + '*';
+        } else if (lastPart.length === 1) {
+            parts[parts.length - 1] = '*';
+        }
         return parts.join(' ');
     }
-    if (rangeName.length >= 4) return rangeName.substring(0, 3) + '***';
+    if (rangeName.length >= 4) {
+        return rangeName.substring(0, 3) + '***';
+    }
     return rangeName.substring(0, 1) + '*';
 }
 
@@ -536,30 +730,36 @@ function formatResult(rangesData, title, timeWindow, totalHits = null, isDemo = 
     return msg;
 }
 
-// ======================= PLAYWRIGHT SCANNER =======================
-async function loginToOrange(page, browserId) {
+// ======================= FAST PLAYWRIGHT SCANNER =======================
+async function fastLoginToOrange(page, browserId) {
     try {
-        console.log(`🌐 Browser ${browserId}: Logging in...`);
+        console.log(`\x1b[36m🌐 Browser ${browserId}: Logging in...\x1b[0m`);
+        
         await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
         await page.waitForTimeout(3000);
         
         const emailSelector = 'input[type="email"], input[name="email"], #email';
         await page.waitForSelector(emailSelector, { timeout: 15000 });
+        
         await page.click(emailSelector, { clickCount: 3 });
         await page.keyboard.press('Backspace');
         await page.type(emailSelector, USERNAME, { delay: 30 });
         
         const passwordSelector = 'input[type="password"], #password';
         await page.waitForSelector(passwordSelector, { timeout: 10000 });
+        
         await page.click(passwordSelector, { clickCount: 3 });
         await page.keyboard.press('Backspace');
         await page.type(passwordSelector, PASSWORD, { delay: 30 });
         
         const loginBtn = await page.$('button[type="submit"], input[type="submit"]');
-        if (loginBtn) await loginBtn.click();
-        else await page.keyboard.press('Enter');
+        if (loginBtn) {
+            await loginBtn.click();
+        } else {
+            await page.keyboard.press('Enter');
+        }
         
-        console.log(`⏳ Browser ${browserId}: Waiting after login...`);
+        console.log(`\x1b[33m⏳ Browser ${browserId}: Waiting ${LOGIN_WAIT_MS/1000} seconds after login...\x1b[0m`);
         await page.waitForTimeout(LOGIN_WAIT_MS);
         
         try {
@@ -567,30 +767,34 @@ async function loginToOrange(page, browserId) {
             await page.mouse.click(viewport.width / 2, viewport.height / 2);
         } catch(e) {}
         
-        console.log(`✅ Browser ${browserId}: Login successful!`);
+        console.log(`\x1b[32m✅ Browser ${browserId}: Login successful!\x1b[0m`);
         return true;
     } catch (e) {
-        console.log(`❌ Browser ${browserId}: Login failed - ${e.message}`);
+        console.log(`\x1b[31m❌ Browser ${browserId}: Login failed - ${e.message}\x1b[0m`);
         return false;
     }
 }
 
-async function scanSingleTarget(page, target, browserId) {
+async function fastScanSingleTarget(page, target, browserId) {
     try {
         await page.goto(CLI_ACCESS_URL, { waitUntil: "domcontentloaded", timeout: SCAN_TIMEOUT_MS });
         await page.waitForTimeout(1000);
+        
         await page.waitForSelector('#CLI', { timeout: 10000 });
         
         await page.click('#CLI', { clickCount: 3 });
         await page.keyboard.press('Backspace');
         await page.type('#CLI', target, { delay: 20 });
+        
         await page.click('#SearchBtn');
+        
         await page.waitForSelector('#Result table tbody tr', { timeout: 8000 });
         
         const ranges = await page.evaluate((params) => {
             const rows = document.querySelectorAll('#Result table tbody tr');
             const results = [];
             let count = 0;
+            
             for (const row of rows) {
                 if (count >= params.RANGES_PER_CLI) break;
                 const cols = row.querySelectorAll('td');
@@ -598,7 +802,13 @@ async function scanSingleTarget(page, target, browserId) {
                     const rangeName = cols[0]?.textContent?.trim() || '';
                     const cli = cols[3]?.textContent?.trim() || '';
                     if (rangeName && cli && rangeName !== "No data found" && !rangeName.includes("No data") && rangeName.length > 2) {
-                        results.push({ range: rangeName, cli: cli, country: params.target, found_at: new Date().toISOString(), browser: params.browserId });
+                        results.push({
+                            range: rangeName,
+                            cli: cli,
+                            country: params.target,
+                            found_at: new Date().toISOString(),
+                            browser: params.browserId
+                        });
                         count++;
                     }
                 }
@@ -607,65 +817,92 @@ async function scanSingleTarget(page, target, browserId) {
         }, { target: target, browserId: browserId, RANGES_PER_CLI: RANGES_PER_CLI });
         
         if (ranges.length > 0) {
-            console.log(`✅ Browser ${browserId}: ${target} → Found ${ranges.length} ranges`);
+            console.log(`\x1b[32m✅ Browser ${browserId}: ${target} → Found ${ranges.length} ranges\x1b[0m`);
             updateLiveCache(target, ranges);
         } else {
-            console.log(`⚠️ Browser ${browserId}: ${target} → Found 0 ranges`);
+            console.log(`\x1b[33m⚠️ Browser ${browserId}: ${target} → Found 0 ranges\x1b[0m`);
         }
+        
         return ranges;
     } catch (e) {
-        console.log(`❌ Browser ${browserId}: ${target} - ${e.message}`);
+        console.log(`\x1b[31m❌ Browser ${browserId}: ${target} - ${e.message}\x1b[0m`);
         return [];
     }
 }
 
-async function startBrowserScanner(browserId, assignedTargets) {
-    let browser = null, context = null, page = null;
-    let targetIndex = 0, loginRetryCount = 0, maxLoginRetries = 5;
+async function startFastBrowserScanner(browserId, assignedTargets) {
+    let browser = null;
+    let context = null;
+    let page = null;
+    let targetIndex = 0;
+    let retryCount = 0;
+    let maxRetries = 3;
+    let loginRetryCount = 0;
+    let maxLoginRetries = 5;
     
     while (scannerRunning) {
         try {
             if (!browser) {
-                console.log(`🚀 Browser ${browserId}: Launching Playwright...`);
+                console.log(`\x1b[35m🚀 Browser ${browserId}: Launching Playwright...\x1b[0m`);
+                
                 browser = await chromium.launch({
                     headless: HEADLESS_MODE,
-                    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage']
+                    args: [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage'
+                    ]
                 });
+                
                 context = await browser.newContext({
                     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
                     viewport: { width: 1366, height: 768 }
                 });
+                
                 page = await context.newPage();
                 
-                const loginSuccess = await loginToOrange(page, browserId);
+                const loginSuccess = await fastLoginToOrange(page, browserId);
                 if (!loginSuccess) {
                     loginRetryCount++;
-                    console.log(`⚠️ Browser ${browserId}: Login failed (attempt ${loginRetryCount}/${maxLoginRetries})`);
+                    console.log(`\x1b[33m⚠️ Browser ${browserId}: Login failed (attempt ${loginRetryCount}/${maxLoginRetries})\x1b[0m`);
                     if (loginRetryCount >= maxLoginRetries) {
-                        console.log(`❌ Browser ${browserId}: Max login retries reached, restarting...`);
+                        console.log(`\x1b[31m❌ Browser ${browserId}: Max login retries reached, restarting browser...\x1b[0m`);
                         await browser.close();
                         browser = null;
+                        context = null;
+                        page = null;
                         loginRetryCount = 0;
                         await new Promise(r => setTimeout(r, 30000));
                         continue;
                     }
                     await browser.close();
                     browser = null;
+                    context = null;
+                    page = null;
                     await new Promise(r => setTimeout(r, 10000));
                     continue;
                 }
                 loginRetryCount = 0;
+                retryCount = 0;
             }
             
             const target = assignedTargets[targetIndex % assignedTargets.length];
             targetIndex++;
-            console.log(`🔍 Browser ${browserId}: Scanning ${target}...`);
-            await scanSingleTarget(page, target, browserId);
+            
+            console.log(`\x1b[36m🔍 Browser ${browserId}: Scanning ${target}...\x1b[0m`);
+            await fastScanSingleTarget(page, target, browserId);
+            
             await new Promise(r => setTimeout(r, SCAN_INTERVAL_MS));
+            
         } catch (e) {
-            console.log(`❌ Browser ${browserId}: ${e.message}, restarting...`);
-            if (browser) { try { await browser.close(); } catch(e) {} }
-            browser = null;
+            console.log(`\x1b[31m❌ Browser ${browserId}: ${e.message}, restarting...\x1b[0m`);
+            if (browser) {
+                try { await browser.close(); } catch(e) {}
+                browser = null;
+                context = null;
+                page = null;
+            }
             await new Promise(r => setTimeout(r, 10000));
         }
     }
@@ -673,18 +910,21 @@ async function startBrowserScanner(browserId, assignedTargets) {
 
 function startMultiBrowserScanner() {
     const cliTargets = getCliTargets();
-    if (cliTargets.length === 0) { console.log(`⚠️ No CLI targets found!`); return; }
     const browserCount = Math.min(BROWSER_COUNT, cliTargets.length);
     const perBrowser = Math.ceil(cliTargets.length / browserCount);
-    console.log(`\n🚀 Starting ${browserCount} Chrome browsers...`);
-    console.log(`📋 Total CLI targets: ${cliTargets.length}`);
-    console.log(`🖥️ Headless Mode: ${HEADLESS_MODE ? "ON" : "OFF"}\n`);
+    
+    console.log(`\n\x1b[36m🚀 Starting ${browserCount} Chrome browsers...\x1b[0m`);
+    console.log(`\x1b[36m📋 Total CLI targets: ${cliTargets.length}\x1b[0m`);
+    console.log(`\x1b[36m🖥️ Headless Mode: ${HEADLESS_MODE ? "ON" : "OFF"}\x1b[0m`);
+    console.log(`\x1b[36m⏱️ Scan interval: ${SCAN_INTERVAL_MS}ms\x1b[0m`);
+    console.log(`\x1b[36m⏱️ Login wait: ${LOGIN_WAIT_MS/1000} seconds\x1b[0m\n`);
+    
     for (let i = 0; i < browserCount; i++) {
         const startIdx = i * perBrowser;
         const endIdx = Math.min(startIdx + perBrowser, cliTargets.length);
         const assigned = cliTargets.slice(startIdx, endIdx);
-        console.log(`📌 Browser ${i+1}: assigned ${assigned.length} targets`);
-        startBrowserScanner(i+1, assigned);
+        console.log(`\x1b[35m📌 Browser ${i+1}: assigned ${assigned.length} targets\x1b[0m`);
+        startFastBrowserScanner(i+1, assigned);
     }
 }
 
@@ -695,6 +935,7 @@ function getMainKeyboard(role) {
         .row({ text: "♻️ 5 MIN" }, { text: "♻️ 10 MIN" })
         .row({ text: "🔝 TOP HIT" }, { text: "📊 CLI SEARCH" })
         .row({ text: "👤 MY INFO" }, { text: "🧑‍💻 DEVELOPER" });
+    
     if (role === "admin" || role === "sub_admin") kb.row({ text: "👑 ADMIN PANEL" });
     return kb.resized();
 }
@@ -723,15 +964,23 @@ function getDemoKeyboard() {
 }
 
 function getBroadcastKeyboard() {
-    return new Keyboard().row({ text: "💎 PREMIUM USERS" }, { text: "🎲 DEMO USERS" }).row({ text: "👥 ALL USERS" }, { text: "🔙 BACK" }).resized();
+    const kb = new Keyboard()
+        .row({ text: "💎 PREMIUM USERS" }, { text: "🎲 DEMO USERS" })
+        .row({ text: "👥 ALL USERS" }, { text: "🔙 BACK" });
+    return kb.resized();
 }
 
 function getPaymentMethodsKeyboard() {
-    return new Keyboard().row({ text: "📲 Bkash" }, { text: "💰 Nagad" }).row({ text: "🚀 Rocket" }, { text: "🪙 Binance" }).row({ text: "🔙 Back" }).resized();
+    const kb = new Keyboard()
+        .row({ text: "📲 Bkash" }, { text: "💰 Nagad" })
+        .row({ text: "🚀 Rocket" }, { text: "🪙 Binance" })
+        .row({ text: "🔙 Back" });
+    return kb.resized();
 }
 
 function getBackKeyboard() {
-    return new Keyboard().row({ text: "🔙 Back" }).resized();
+    const kb = new Keyboard().row({ text: "🔙 Back" });
+    return kb.resized();
 }
 
 // ======================= BOT SETUP =======================
@@ -768,21 +1017,41 @@ async function startDemoLiveUpdates(chatId) {
 }
 
 async function sendBroadcast(ctx, targetType, message) {
-    let successCount = 0, failCount = 0, targetUsers = [];
+    let successCount = 0;
+    let failCount = 0;
+    let targetUsers = [];
+    
     if (targetType === "premium") {
-        for (const [uid, data] of Object.entries(users)) if (data.role === "premium") targetUsers.push(uid);
+        for (const [uid, data] of Object.entries(users)) {
+            if (data.role === "premium") targetUsers.push(uid);
+        }
     } else if (targetType === "demo") {
-        for (const [uid, data] of Object.entries(users)) if (data.role === "demo") targetUsers.push(uid);
+        for (const [uid, data] of Object.entries(users)) {
+            if (data.role === "demo") targetUsers.push(uid);
+        }
     } else if (targetType === "all") {
-        for (const [uid, data] of Object.entries(users)) if (data.role === "premium" || data.role === "demo") targetUsers.push(uid);
+        for (const [uid, data] of Object.entries(users)) {
+            if (data.role === "premium" || data.role === "demo") targetUsers.push(uid);
+        }
     }
+    
     for (const uid of targetUsers) {
-        try { await ctx.api.sendMessage(uid, message, { parse_mode: "Markdown" }); successCount++; await new Promise(r => setTimeout(r, 50)); } catch(e) { failCount++; }
+        try {
+            await ctx.api.sendMessage(uid, message, { parse_mode: "Markdown" });
+            successCount++;
+            await new Promise(r => setTimeout(r, 50));
+        } catch(e) {
+            failCount++;
+        }
     }
+    
     return { successCount, failCount, total: targetUsers.length };
 }
 
-bot.catch((err) => { console.error("Bot error:", err.message); logToFile(`Bot error: ${err.message}`); });
+bot.catch((err) => {
+    console.error("Bot error:", err.message);
+    logToFile(`Bot error: ${err.message}`);
+});
 
 // ==================== COMMANDS ====================
 bot.command("start", async (ctx) => {
@@ -799,30 +1068,107 @@ bot.command("start", async (ctx) => {
             const isNew = addDemoUser(uid, ctx.from.username, fullName);
             if (isNew && !firstStartNotified.has(String(uid))) {
                 firstStartNotified.add(String(uid));
-                try { await ctx.api.sendMessage(ADMIN_ID, `🆕 **NEW DEMO USER!**\n👤 ${fullName}\n🆔 \`${uid}\``, { parse_mode: "Markdown" }); } catch(e) {}
+                try {
+                    await ctx.api.sendMessage(ADMIN_ID, `🆕 **NEW DEMO USER!**\n👤 ${fullName}\n🆔 \`${uid}\``, { parse_mode: "Markdown" });
+                } catch(e) {}
             }
-            const welcomeMsg = `👋 Hello ${escapedFullName} ⚡\n\n🎉 Welcome To Range X Orange Bot 🎉\n━━━━━━━━━━━━━━━\n\n📌 **Bot Features:**\n• 🟢 Live Results\n• ⏱️ 5 Minute Report\n• 🕙 10 Minute Report\n• 🔍 Range Search\n• 📊 CLI Analytics\n• 🏆 Most Hit Ranges\n\n━━━━━━━━━━━━━━━\n⚡ Fast • Live • Real-Time Monitoring System\n🔒 **Premium Access Required For Full Features**\n\n🚀 Use Buttons Below`;
+            
+            const welcomeMsg = `👋 Hello ${escapedFullName} ⚡\n\n` +
+                `🎉 Welcome To Range X Orange Bot 🎉\n` +
+                `━━━━━━━━━━━━━━━\n\n` +
+                `📌 **Bot Features:**\n` +
+                `• 🟢 Live Results\n` +
+                `• ⏱️ 5 Minute Report\n` +
+                `• 🕙 10 Minute Report\n` +
+                `• 🔍 Range Search\n` +
+                `• 📊 CLI Analytics\n` +
+                `• 🏆 Most Hit Ranges\n\n` +
+                `━━━━━━━━━━━━━━━\n` +
+                `⚡ Fast • Live • Real-Time Monitoring System\n` +
+                `🔒 **Premium Access Required For Full Features**\n\n` +
+                `🚀 Use Buttons Below`;
+            
             const kb = getDemoKeyboard();
             await ctx.reply(welcomeMsg, { parse_mode: "Markdown", reply_markup: kb });
         } 
         else if (role === "premium") {
             const userData = users[String(uid)];
             const daysLeft = userData?.expiry ? Math.ceil((userData.expiry - Date.now()) / (24 * 60 * 60 * 1000)) : 30;
-            const welcomeMsg = `👋 Welcome Back ${escapedFullName} ⚡\n\n🎉 **Premium Access Active** 🎉\n━━━━━━━━━━━━━━━\n\n📌 **Premium Features Unlocked:**\n• 🟢 Live Results (Auto-Refresh)\n• ⏱️ 5 Minute Report\n• 🕙 10 Minute Report\n• 🔍 Range Search (Full Access)\n• 📊 CLI Analytics (Advanced)\n• 🏆 Most Hit Ranges\n• 🌍 Country Wise Search\n• 📈 Advanced Statistics\n\n━━━━━━━━━━━━━━━\n💎 **Your Premium Plan**\n📅 Valid for: ${daysLeft} days remaining\n━━━━━━━━━━━━━━━\n⚡ Fast • Live • Real-Time Monitoring System\n✅ **Full Access Granted**\n\n🚀 Use Buttons Below`;
+            
+            const welcomeMsg = `👋 Welcome Back ${escapedFullName} ⚡\n\n` +
+                `🎉 **Premium Access Active** 🎉\n` +
+                `━━━━━━━━━━━━━━━\n\n` +
+                `📌 **Premium Features Unlocked:**\n` +
+                `• 🟢 Live Results (Auto-Refresh)\n` +
+                `• ⏱️ 5 Minute Report\n` +
+                `• 🕙 10 Minute Report\n` +
+                `• 🔍 Range Search (Full Access)\n` +
+                `• 📊 CLI Analytics (Advanced)\n` +
+                `• 🏆 Most Hit Ranges\n` +
+                `• 🌍 Country Wise Search\n` +
+                `• 📈 Advanced Statistics\n\n` +
+                `━━━━━━━━━━━━━━━\n` +
+                `💎 **Your Premium Plan**\n` +
+                `📅 Valid for: ${daysLeft} days remaining\n` +
+                `━━━━━━━━━━━━━━━\n` +
+                `⚡ Fast • Live • Real-Time Monitoring System\n` +
+                `✅ **Full Access Granted**\n\n` +
+                `🚀 Use Buttons Below`;
+            
             const kb = getMainKeyboard(role);
             await ctx.reply(welcomeMsg, { parse_mode: "Markdown", reply_markup: kb });
         }
         else if (role === "admin") {
-            const welcomeMsg = `👋 Hello ${escapedFullName} ⚡\n\n🎉 **Welcome To Range X Orange Bot** 🎉\n━━━━━━━━━━━━━━━\n\n👑 **Admin Dashboard Active**\n\n📌 **Bot Features:**\n• 🟢 Live Results\n• ⏱️ 5 Minute Report\n• 🕙 10 Minute Report\n• 🔍 Range Search\n• 📊 CLI Analytics\n• 🏆 Most Hit Ranges\n\n━━━━━━━━━━━━━━━\n🛡️ **Admin Access**\n• ✅ Add/Remove Users\n• 🔥 Add/Remove Sub-Admins\n• 📋 User List\n• 📢 Broadcast Message\n━━━━━━━━━━━━━━━\n⚡ Fast • Live • Real-Time Monitoring System\n\n🚀 Use Buttons Below`;
+            const welcomeMsg = `👋 Hello ${escapedFullName} ⚡\n\n` +
+                `🎉 **Welcome To Range X Orange Bot** 🎉\n` +
+                `━━━━━━━━━━━━━━━\n\n` +
+                `👑 **Admin Dashboard Active**\n\n` +
+                `📌 **Bot Features:**\n` +
+                `• 🟢 Live Results\n` +
+                `• ⏱️ 5 Minute Report\n` +
+                `• 🕙 10 Minute Report\n` +
+                `• 🔍 Range Search\n` +
+                `• 📊 CLI Analytics\n` +
+                `• 🏆 Most Hit Ranges\n\n` +
+                `━━━━━━━━━━━━━━━\n` +
+                `🛡️ **Admin Access**\n` +
+                `• ✅ Add/Remove Users\n` +
+                `• 🔥 Add/Remove Sub-Admins\n` +
+                `• 📋 User List\n` +
+                `• 📢 Broadcast Message\n` +
+                `━━━━━━━━━━━━━━━\n` +
+                `⚡ Fast • Live • Real-Time Monitoring System\n\n` +
+                `🚀 Use Buttons Below`;
+            
             const kb = getMainKeyboard(role);
             await ctx.reply(welcomeMsg, { parse_mode: "Markdown", reply_markup: kb });
         }
         else if (role === "sub_admin") {
             const adminName = getSubAdminName(String(uid));
-            const welcomeMsg = `👋 Hello ${escapeMarkdown(adminName) || escapedFullName} ⚡\n\n🎉 **Welcome To Range X Orange Bot** 🎉\n━━━━━━━━━━━━━━━\n\n🛡️ **Sub-Admin Dashboard Active**\n\n📌 **Bot Features:**\n• 🟢 Live Results\n• ⏱️ 5 Minute Report\n• 🕙 10 Minute Report\n• 🔍 Range Search\n• 📊 CLI Analytics\n• 🏆 Most Hit Ranges\n\n━━━━━━━━━━━━━━━\n🛡️ **Sub-Admin Access**\n• ✅ Add/Remove Users\n• 📋 User List\n━━━━━━━━━━━━━━━\n⚡ Fast • Live • Real-Time Monitoring System\n\n🚀 Use Buttons Below`;
+            
+            const welcomeMsg = `👋 Hello ${escapeMarkdown(adminName) || escapedFullName} ⚡\n\n` +
+                `🎉 **Welcome To Range X Orange Bot** 🎉\n` +
+                `━━━━━━━━━━━━━━━\n\n` +
+                `🛡️ **Sub-Admin Dashboard Active**\n\n` +
+                `📌 **Bot Features:**\n` +
+                `• 🟢 Live Results\n` +
+                `• ⏱️ 5 Minute Report\n` +
+                `• 🕙 10 Minute Report\n` +
+                `• 🔍 Range Search\n` +
+                `• 📊 CLI Analytics\n` +
+                `• 🏆 Most Hit Ranges\n\n` +
+                `━━━━━━━━━━━━━━━\n` +
+                `🛡️ **Sub-Admin Access**\n` +
+                `• ✅ Add/Remove Users\n` +
+                `• 📋 User List\n` +
+                `━━━━━━━━━━━━━━━\n` +
+                `⚡ Fast • Live • Real-Time Monitoring System\n\n` +
+                `🚀 Use Buttons Below`;
+            
             const kb = getMainKeyboard(role);
             await ctx.reply(welcomeMsg, { parse_mode: "Markdown", reply_markup: kb });
         }
+        
     } catch (e) {
         console.error("Start error:", e.message);
         await ctx.reply("⚠️ An error occurred. Please try again.");
@@ -833,17 +1179,25 @@ bot.command("myinfo", async (ctx) => {
     try {
         const info = getUserInfo(ctx.from.id, ctx.from.first_name, ctx.from.last_name, ctx.from.username);
         let msg = "";
+        
         if (info.role === "admin") {
             msg = `👤 **USER PROFILE**\n────────────────────────\n1. Name: \`${info.name}\`\n2. Username: @${info.username}\n3. User ID: \`${info.userId}\`\n4. Status: ${info.status}\n────────────────────────\n🛡 Access Level: ${info.accessLevel}\n⚙️ Panel: ${info.panel}\n🔐 Security: ${info.security}\n🛡 ${info.systemAccess}\n────────────────────────`;
-        } else if (info.role === "sub_admin") {
+        }
+        else if (info.role === "sub_admin") {
             msg = `👤 **USER PROFILE**\n────────────────────────\n1. Name: \`${info.name}\`\n2. Username: @${info.username}\n3. User ID: \`${info.userId}\`\n4. Status: ${info.status}\n────────────────────────\n🛡 Access Level: ${info.accessLevel}\n⚙️ Panel: ${info.panel}\n🔐 Security: ${info.security}\n🛡 ${info.systemAccess}\n────────────────────────`;
-        } else if (info.role === "premium") {
+        }
+        else if (info.role === "premium") {
             msg = `👤 **USER PROFILE**\n────────────────────────\n1. Name: \`${info.name}\`\n2. Username: @${info.username}\n3. User ID: \`${info.userId}\`\n4. Status: ${info.status}\n────────────────────────\n⭐ Premium Start: ${info.startDate}\n⏰ Premium Expiry: ${info.expiryDate}\n📊 Validity: ${info.daysLeft} days remaining\n────────────────────────\n⚡ Live Range: ${info.liveRange}\n📊 Analytics: ${info.analytics}\n🔥 Features: ${info.features}\n────────────────────────\n🔥 **Thanks for joining Premium!** 😊`;
-        } else {
+        }
+        else {
             msg = `👤 **USER PROFILE**\n────────────────────────\n1. Name: \`${info.name}\`\n2. Username: @${info.username}\n3. User ID: \`${info.userId}\`\n4. Status: ${info.status}\n────────────────────────\n📊 Access Level: ${info.accessLevel}\n⚠️ Live Data: ${info.liveData}\n⚠️ Analytics: ${info.analytics}\n────────────────────────\n\n🔒 **Upgrade anytime to unlock full features** 😊`;
         }
+        
         await ctx.reply(msg, { parse_mode: "Markdown" });
-    } catch (e) { await ctx.reply("⚠️ An error occurred. Please use /start"); }
+    } catch (e) {
+        console.error("Myinfo error:", e.message);
+        await ctx.reply("⚠️ An error occurred. Please use /start");
+    }
 });
 
 bot.command("cancel", async (ctx) => {
@@ -859,17 +1213,25 @@ bot.hears("👤 MY INFO", async (ctx) => {
     try {
         const info = getUserInfo(ctx.from.id, ctx.from.first_name, ctx.from.last_name, ctx.from.username);
         let msg = "";
+        
         if (info.role === "admin") {
             msg = `👤 **USER PROFILE**\n────────────────────────\n1. Name: \`${info.name}\`\n2. Username: @${info.username}\n3. User ID: \`${info.userId}\`\n4. Status: ${info.status}\n────────────────────────\n🛡 Access Level: ${info.accessLevel}\n⚙️ Panel: ${info.panel}\n🔐 Security: ${info.security}\n🛡 ${info.systemAccess}\n────────────────────────`;
-        } else if (info.role === "sub_admin") {
+        }
+        else if (info.role === "sub_admin") {
             msg = `👤 **USER PROFILE**\n────────────────────────\n1. Name: \`${info.name}\`\n2. Username: @${info.username}\n3. User ID: \`${info.userId}\`\n4. Status: ${info.status}\n────────────────────────\n🛡 Access Level: ${info.accessLevel}\n⚙️ Panel: ${info.panel}\n🔐 Security: ${info.security}\n🛡 ${info.systemAccess}\n────────────────────────`;
-        } else if (info.role === "premium") {
+        }
+        else if (info.role === "premium") {
             msg = `👤 **USER PROFILE**\n────────────────────────\n1. Name: \`${info.name}\`\n2. Username: @${info.username}\n3. User ID: \`${info.userId}\`\n4. Status: ${info.status}\n────────────────────────\n⭐ Premium Start: ${info.startDate}\n⏰ Premium Expiry: ${info.expiryDate}\n📊 Validity: ${info.daysLeft} days remaining\n────────────────────────\n⚡ Live Range: ${info.liveRange}\n📊 Analytics: ${info.analytics}\n🔥 Features: ${info.features}\n────────────────────────\n🔥 **Thanks for joining Premium!** 😊`;
-        } else {
+        }
+        else {
             msg = `👤 **USER PROFILE**\n────────────────────────\n1. Name: \`${info.name}\`\n2. Username: @${info.username}\n3. User ID: \`${info.userId}\`\n4. Status: ${info.status}\n────────────────────────\n📊 Access Level: ${info.accessLevel}\n⚠️ Live Data: ${info.liveData}\n⚠️ Analytics: ${info.analytics}\n────────────────────────\n\n🔒 **Upgrade anytime to unlock full features** 😊`;
         }
+        
         await ctx.reply(msg, { parse_mode: "Markdown" });
-    } catch (e) { await ctx.reply("⚠️ An error occurred. Please try again."); }
+    } catch (e) {
+        console.error("My info error:", e.message);
+        await ctx.reply("⚠️ An error occurred. Please try again.");
+    }
 });
 
 bot.hears("🎭 LIVE RESULT", async (ctx) => {
@@ -885,7 +1247,9 @@ bot.hears("🎭 LIVE RESULT", async (ctx) => {
         const sent = await ctx.reply(formatResult(results, "LIVE RESULT", "Last 3 Minutes", total, false, countryStats, LIVE_COUNTRY_SUMMARY_LIMIT), { parse_mode: "Markdown" });
         liveMessageId = sent.message_id;
     }
-    if (LIVE_AUTO_REFRESH_ENABLED) await startLiveUpdates(ctx.chat.id);
+    if (LIVE_AUTO_REFRESH_ENABLED) {
+        await startLiveUpdates(ctx.chat.id);
+    }
 });
 
 bot.hears("♻️ 5 MIN", async (ctx) => {
@@ -930,7 +1294,7 @@ bot.hears("📊 CLI SEARCH", async (ctx) => {
 });
 
 bot.hears("🧑‍💻 DEVELOPER", async (ctx) => {
-    await ctx.reply(`👨‍💻 **DEVELOPER INFO**\n─────────────────\n👑 Owner: ${ADMIN_USERNAME}\n🛠️ Version: 4.0.0\n📅 Last Update: May 2026\n\n💬 For support, contact ${ADMIN_USERNAME}`, { parse_mode: "Markdown" });
+    await ctx.reply(`👨‍💻 **DEVELOPER INFO**\n─────────────────\n👑 Owner: ${ADMIN_USERNAME}\n🛠️ Version: 3.0.0\n📅 Last Update: May 2026\n\n💬 For support, contact ${ADMIN_USERNAME}`, { parse_mode: "Markdown" });
 });
 
 bot.hears("📞 CONTACT US", async (ctx) => {
@@ -943,13 +1307,16 @@ bot.hears("📊 DEMO RESULTS", async (ctx) => {
     if (!res.length) return await ctx.reply("⚠️ Scanning data... Please wait.");
     const sent = await ctx.reply(formatResult(res, "DEMO RESULTS", `Last ${DEMO_WINDOW_MINUTES} Minutes`, res.reduce((s, r) => s + r.hits, 0), true, countryStats, DEMO_COUNTRY_SUMMARY_LIMIT), { parse_mode: "Markdown" });
     demoLiveMessageId = sent.message_id;
-    if (DEMO_LIVE_UPDATE_ENABLED) await startDemoLiveUpdates(ctx.chat.id);
+    if (DEMO_LIVE_UPDATE_ENABLED) {
+        await startDemoLiveUpdates(ctx.chat.id);
+    }
 });
 
 bot.hears("✅ UPGRADE TO PREMIUM", async (ctx) => {
     await ctx.reply(PAYMENT_MESSAGES.header, { parse_mode: "Markdown", reply_markup: getPaymentMethodsKeyboard() });
 });
 
+// Handle payment methods
 for (const [key, method] of Object.entries(PAYMENT_METHODS)) {
     bot.hears(`${method.emoji} ${method.name}`, async (ctx) => {
         const uid = ctx.from.id;
@@ -957,105 +1324,6 @@ for (const [key, method] of Object.entries(PAYMENT_METHODS)) {
         await ctx.reply(PAYMENT_MESSAGES.getPaymentInstruction(key), { parse_mode: "Markdown", reply_markup: getBackKeyboard() });
     });
 }
-
-bot.on(":photo", async (ctx) => {
-    try {
-        const uid = ctx.from.id;
-        const paymentState = userPaymentState[uid];
-        if (!paymentState || paymentState.step !== "waiting_ss") {
-            await ctx.reply("❌ No pending payment request. Use /start and click UPGRADE TO PREMIUM.");
-            return;
-        }
-        const photo = ctx.message.photo[ctx.message.photo.length - 1];
-        const fullName = `${ctx.from.first_name || ""} ${ctx.from.last_name || ""}`.trim() || "User";
-        userPaymentData[uid] = {
-            photoId: photo.file_id,
-            name: fullName,
-            username: ctx.from.username || "No username",
-            userId: uid,
-            method: paymentState.method
-        };
-        userPaymentState[uid] = { step: "waiting_number", method: paymentState.method };
-        await ctx.reply(PAYMENT_MESSAGES.screenshot_received, { parse_mode: "Markdown", reply_markup: getBackKeyboard() });
-    } catch (e) { console.error("Photo handler error:", e.message); await ctx.reply("⚠️ An error occurred."); }
-});
-
-bot.on(":text", async (ctx) => {
-    try {
-        const uid = ctx.from.id;
-        const text = ctx.message.text.trim();
-        const paymentState = userPaymentState[uid];
-        const paymentData = userPaymentData[uid];
-        
-        if (paymentState && paymentState.step === "waiting_number" && paymentData && !paymentData.transactionId) {
-            if (!text || text.length < 1) {
-                await ctx.reply(PAYMENT_MESSAGES.invalid_input, { parse_mode: "Markdown" });
-                return;
-            }
-            paymentData.transactionId = text;
-            userPaymentData[uid] = paymentData;
-            await ctx.reply(PAYMENT_MESSAGES.success, { parse_mode: "Markdown" });
-            
-            const adminMsg = `${ADMIN_NOTIFICATION.header}\n${ADMIN_NOTIFICATION.user_line.replace('{name}', escapeMarkdown(paymentData.name)).replace('{user_id}', uid).replace('{username}', paymentData.username)}\n${ADMIN_NOTIFICATION.method_line.replace('{method}', paymentData.method.toUpperCase())}\n${ADMIN_NOTIFICATION.transaction_line.replace('{transaction_id}', text)}\n${ADMIN_NOTIFICATION.action_line}`;
-            const approveKeyboard = new InlineKeyboard().row(InlineKeyboard.text(BUTTON_LABELS.approve, `approve_${uid}`), InlineKeyboard.text(BUTTON_LABELS.reject, `reject_${uid}`));
-            await ctx.api.sendPhoto(ADMIN_ID, paymentData.photoId, { caption: adminMsg, parse_mode: "Markdown", reply_markup: approveKeyboard });
-            delete userPaymentState[uid];
-            delete userPaymentData[uid];
-            return;
-        }
-        
-        const state = userStates[uid];
-        const broadcast = broadcastState[uid];
-        
-        if (broadcast && broadcast.step === "waiting_message") {
-            const targetType = broadcast.type;
-            let targetName = targetType === "premium" ? "PREMIUM USERS" : (targetType === "demo" ? "DEMO USERS" : "ALL USERS");
-            await ctx.reply(`📢 **Sending broadcast to ${targetName}...**`, { parse_mode: "Markdown" });
-            const result = await sendBroadcast(ctx, targetType, text);
-            delete broadcastState[uid];
-            await ctx.reply(`✅ **Broadcast Complete!**\n\n📊 Target: ${targetName}\n✅ Sent: ${result.successCount} users\n❌ Failed: ${result.failCount} users\n📬 Total: ${result.total} users`, { parse_mode: "Markdown" });
-            return;
-        }
-        
-        if (state === "search_range") {
-            delete userStates[uid];
-            const res = searchByKeyword(text, SEARCH_WINDOW_MINUTES, SEARCH_RANGE_LIMIT);
-            const countryStats = SEARCH_COUNTRY_SUMMARY ? getCountryStats(SEARCH_WINDOW_MINUTES) : null;
-            if (!res.length) return await ctx.reply(`❌ No data found for: **${escapeMarkdown(text)}**`, { parse_mode: "Markdown" });
-            await ctx.reply(formatResult(res, `SEARCH: ${text.toUpperCase()}`, `Last ${SEARCH_WINDOW_MINUTES} Minutes`, res.reduce((s, r) => s + r.hits, 0), false, countryStats, 10), { parse_mode: "Markdown" });
-        }
-        else if (state === "cli_search") {
-            delete userStates[uid];
-            const res = searchByKeyword(text, CLI_SEARCH_WINDOW_MINUTES, CLI_SEARCH_LIMIT);
-            const countryStats = CLI_SEARCH_COUNTRY_SUMMARY ? getCountryStats(CLI_SEARCH_WINDOW_MINUTES) : null;
-            if (!res.length) return await ctx.reply(`❌ No data found for CLI: **${escapeMarkdown(text)}**`, { parse_mode: "Markdown" });
-            await ctx.reply(formatResult(res, `CLI SEARCH: ${text.toUpperCase()}`, `Last ${CLI_SEARCH_WINDOW_MINUTES} Minutes`, res.reduce((s, r) => s + r.hits, 0), false, countryStats, 10), { parse_mode: "Markdown" });
-        }
-        else if (state === "add_user" && /^\d+$/.test(text)) {
-            delete userStates[uid];
-            const expiryFormatted = addPremiumUser(text, "Premium User", PREMIUM_PLAN.duration);
-            await ctx.reply(`✅ User \`${text}\` added as PREMIUM for ${PREMIUM_PLAN.duration} days!\n📅 Expires: ${expiryFormatted}`, { parse_mode: "Markdown" });
-            try { await ctx.api.sendMessage(text, `🎉 **Congratulations!** You have been upgraded to PREMIUM for ${PREMIUM_PLAN.duration} days!\n📅 Valid until: ${expiryFormatted}\nUse /start to access all features.`, { parse_mode: "Markdown" }); } catch(e) {}
-        }
-        else if (state === "remove_user" && /^\d+$/.test(text)) {
-            delete userStates[uid];
-            if (removeUser(text)) await ctx.reply(`✅ User \`${text}\` removed!`, { parse_mode: "Markdown" });
-            else await ctx.reply(`⚠️ User \`${text}\` not found.`, { parse_mode: "Markdown" });
-        }
-        else if (state === "add_subadmin" && /^\d+$/.test(text)) {
-            delete userStates[uid];
-            if (addSubAdminWithName(text, "Sub-Admin")) {
-                await ctx.reply(`✅ User \`${text}\` is now a SUB-ADMIN!`, { parse_mode: "Markdown" });
-                try { await ctx.api.sendMessage(text, "🛡️ **You have been promoted to SUB-ADMIN!**\nUse /start to access admin panel.", { parse_mode: "Markdown" }); } catch(e) {}
-            } else { await ctx.reply(`⚠️ User \`${text}\` is already a SUB-ADMIN.`, { parse_mode: "Markdown" }); }
-        }
-        else if (state === "remove_subadmin" && /^\d+$/.test(text)) {
-            delete userStates[uid];
-            if (removeSubAdmin(text)) await ctx.reply(`✅ User \`${text}\` removed from SUB-ADMIN.`, { parse_mode: "Markdown" });
-            else await ctx.reply(`⚠️ User \`${text}\` is not a SUB-ADMIN.`, { parse_mode: "Markdown" });
-        }
-    } catch (e) { console.error("Text input error:", e.message); await ctx.reply("⚠️ An error occurred."); }
-});
 
 bot.hears("👑 ADMIN PANEL", async (ctx) => {
     const role = getUserRole(ctx.from.id);
@@ -1068,14 +1336,16 @@ bot.hears("🔙 BACK TO MAIN", async (ctx) => {
     const role = getUserRole(ctx.from.id);
     delete userStates[ctx.from.id];
     delete broadcastState[ctx.from.id];
+    let status = role === "admin" ? "👑 ADMIN OWNER" : role === "sub_admin" ? "🛡️ SUB-ADMIN" : role === "premium" ? "✅ AUTHORIZED" : "🎲 DEMO MODE";
     const kb = role === "demo" ? getDemoKeyboard() : getMainKeyboard(role);
-    await ctx.reply(`👋 **Back to Main Menu**`, { parse_mode: "Markdown", reply_markup: kb });
+    await ctx.reply(`👋 **Back to Main Menu**\nStatus: ${status}`, { parse_mode: "Markdown", reply_markup: kb });
 });
 
 bot.hears("🔙 Back", async (ctx) => {
     await ctx.reply(PAYMENT_MESSAGES.header, { parse_mode: "Markdown", reply_markup: getPaymentMethodsKeyboard() });
 });
 
+// ==================== ADMIN BUTTONS ====================
 bot.hears("✅ ADD USER", async (ctx) => {
     const role = getUserRole(ctx.from.id);
     if (role !== "admin" && role !== "sub_admin") return await ctx.reply("🚫 No permission!");
@@ -1143,39 +1413,221 @@ bot.hears("❄️ REMOVE SUB-ADMIN", async (ctx) => {
     await ctx.reply("⚠️ **Type User ID to remove from SUB-ADMIN:**\nExample: `123456789`\n\n/cancel to stop");
 });
 
+// ==================== TEXT INPUT ====================
+bot.on(":text", async (ctx) => {
+    try {
+        const uid = ctx.from.id;
+        const text = ctx.message.text;
+        const state = userStates[uid];
+        const broadcast = broadcastState[uid];
+        const paymentState = userPaymentState[uid];
+        
+        // Check for payment transaction ID first
+        if (paymentState && paymentState.step === "waiting_number") {
+            const methodKey = paymentState.method;
+            const method = PAYMENT_METHODS[methodKey.toUpperCase()];
+            const paymentData = userPaymentData[uid];
+            
+            if (!paymentData) {
+                await ctx.reply("❌ Payment data not found. Please start over with /start.");
+                delete userPaymentState[uid];
+                return;
+            }
+            
+            if (!text || text.length < 1) {
+                await ctx.reply(PAYMENT_MESSAGES.invalid_input, { parse_mode: "Markdown" });
+                return;
+            }
+            
+            paymentData.transactionId = text;
+            userPaymentData[uid] = paymentData;
+            
+            await ctx.reply(PAYMENT_MESSAGES.success, { parse_mode: "Markdown" });
+            
+            const adminMsg = `${ADMIN_NOTIFICATION.header}\n` +
+                `${ADMIN_NOTIFICATION.user_line.replace('{name}', escapeMarkdown(paymentData.name)).replace('{user_id}', uid).replace('{username}', paymentData.username)}\n` +
+                `${ADMIN_NOTIFICATION.method_line.replace('{method}', method.name)}\n` +
+                `${ADMIN_NOTIFICATION.transaction_line.replace('{transaction_id}', text)}\n` +
+                `${ADMIN_NOTIFICATION.action_line}`;
+            
+            const approveKeyboard = new InlineKeyboard()
+                .row(
+                    InlineKeyboard.text(BUTTON_LABELS.approve, `approve_${uid}`),
+                    InlineKeyboard.text(BUTTON_LABELS.reject, `reject_${uid}`)
+                );
+            
+            await ctx.api.sendPhoto(ADMIN_ID, paymentData.photoId, {
+                caption: adminMsg,
+                parse_mode: "Markdown",
+                reply_markup: approveKeyboard
+            });
+            
+            delete userPaymentState[uid];
+            return;
+        }
+        
+        if (broadcast && broadcast.step === "waiting_message") {
+            const targetType = broadcast.type;
+            let targetName = "";
+            if (targetType === "premium") targetName = "PREMIUM USERS";
+            else if (targetType === "demo") targetName = "DEMO USERS";
+            else targetName = "ALL USERS";
+            
+            await ctx.reply(`📢 **Sending broadcast to ${targetName}...**\n\n⏳ Please wait, this may take a few moments.`, { parse_mode: "Markdown" });
+            
+            const result = await sendBroadcast(ctx, targetType, text);
+            delete broadcastState[uid];
+            
+            await ctx.reply(`✅ **Broadcast Complete!**\n\n📊 Target: ${targetName}\n✅ Sent: ${result.successCount} users\n❌ Failed: ${result.failCount} users\n📬 Total: ${result.total} users\n\n👑 Use /start to return to main menu.`, { parse_mode: "Markdown" });
+            return;
+        }
+        
+        if (state === "search_range") {
+            delete userStates[uid];
+            const res = searchByKeyword(text, SEARCH_WINDOW_MINUTES, SEARCH_RANGE_LIMIT);
+            const countryStats = SEARCH_COUNTRY_SUMMARY ? getCountryStats(SEARCH_WINDOW_MINUTES) : null;
+            if (!res.length) return await ctx.reply(`❌ No data found for: **${escapeMarkdown(text)}**`, { parse_mode: "Markdown" });
+            await ctx.reply(formatResult(res, `SEARCH: ${text.toUpperCase()}`, `Last ${SEARCH_WINDOW_MINUTES} Minutes`, res.reduce((s, r) => s + r.hits, 0), false, countryStats, 10), { parse_mode: "Markdown" });
+        }
+        else if (state === "cli_search") {
+            delete userStates[uid];
+            const res = searchByKeyword(text, CLI_SEARCH_WINDOW_MINUTES, CLI_SEARCH_LIMIT);
+            const countryStats = CLI_SEARCH_COUNTRY_SUMMARY ? getCountryStats(CLI_SEARCH_WINDOW_MINUTES) : null;
+            if (!res.length) return await ctx.reply(`❌ No data found for CLI: **${escapeMarkdown(text)}**`, { parse_mode: "Markdown" });
+            await ctx.reply(formatResult(res, `CLI SEARCH: ${text.toUpperCase()}`, `Last ${CLI_SEARCH_WINDOW_MINUTES} Minutes`, res.reduce((s, r) => s + r.hits, 0), false, countryStats, 10), { parse_mode: "Markdown" });
+        }
+        else if (state === "add_user" && /^\d+$/.test(text)) {
+            delete userStates[uid];
+            const expiryFormatted = addPremiumUser(text, "Premium User", PREMIUM_PLAN.duration);
+            await ctx.reply(`✅ User \`${text}\` added as PREMIUM for ${PREMIUM_PLAN.duration} days!\n📅 Expires: ${expiryFormatted}`, { parse_mode: "Markdown" });
+            try { await ctx.api.sendMessage(text, `🎉 **Congratulations!** You have been upgraded to PREMIUM for ${PREMIUM_PLAN.duration} days!\n📅 Valid until: ${expiryFormatted}\nUse /start to access all features.`, { parse_mode: "Markdown" }); } catch(e) {}
+        }
+        else if (state === "remove_user" && /^\d+$/.test(text)) {
+            delete userStates[uid];
+            if (removeUser(text)) await ctx.reply(`✅ User \`${text}\` removed!`, { parse_mode: "Markdown" });
+            else await ctx.reply(`⚠️ User \`${text}\` not found.`, { parse_mode: "Markdown" });
+        }
+        else if (state === "add_subadmin" && /^\d+$/.test(text)) {
+            delete userStates[uid];
+            if (addSubAdminWithName(text, "Sub-Admin")) {
+                await ctx.reply(`✅ User \`${text}\` is now a SUB-ADMIN!`, { parse_mode: "Markdown" });
+                try { await ctx.api.sendMessage(text, "🛡️ **You have been promoted to SUB-ADMIN!**\nUse /start to access admin panel.", { parse_mode: "Markdown" }); } catch(e) {}
+            } else { await ctx.reply(`⚠️ User \`${text}\` is already a SUB-ADMIN.`, { parse_mode: "Markdown" }); }
+        }
+        else if (state === "remove_subadmin" && /^\d+$/.test(text)) {
+            delete userStates[uid];
+            if (removeSubAdmin(text)) await ctx.reply(`✅ User \`${text}\` removed from SUB-ADMIN.`, { parse_mode: "Markdown" });
+            else await ctx.reply(`⚠️ User \`${text}\` is not a SUB-ADMIN.`, { parse_mode: "Markdown" });
+        }
+        
+    } catch (e) {
+        console.error("Text input error:", e.message);
+        await ctx.reply("⚠️ An error occurred. Please try again.");
+    }
+});
+
+// ==================== PHOTO HANDLER FOR PAYMENT ====================
+bot.on(":photo", async (ctx) => {
+    try {
+        const uid = ctx.from.id;
+        const paymentState = userPaymentState[uid];
+        
+        if (!paymentState || paymentState.step !== "waiting_ss") {
+            await ctx.reply("❌ No pending payment request. Use /start and click UPGRADE TO PREMIUM.");
+            return;
+        }
+        
+        const methodKey = paymentState.method;
+        const method = PAYMENT_METHODS[methodKey.toUpperCase()];
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const fullName = `${ctx.from.first_name || ""} ${ctx.from.last_name || ""}`.trim() || "User";
+        
+        userPaymentData[uid] = {
+            method: method.name,
+            methodKey: methodKey,
+            photoId: photo.file_id,
+            name: fullName,
+            username: ctx.from.username || "No username",
+            userId: uid
+        };
+        
+        userPaymentState[uid] = { step: "waiting_number", method: methodKey };
+        
+        await ctx.reply(PAYMENT_MESSAGES.screenshot_received, { parse_mode: "Markdown", reply_markup: getBackKeyboard() });
+        
+    } catch (e) {
+        console.error("Photo handler error:", e.message);
+        await ctx.reply("⚠️ An error occurred. Please try again.");
+    }
+});
+
+// ==================== INLINE CALLBACK HANDLERS ====================
 bot.callbackQuery(/^approve_(.+)$/, async (ctx) => {
-    if (getUserRole(ctx.from.id) !== "admin") { await ctx.answerCallbackQuery("🚫 Only admin can approve!"); return; }
+    if (getUserRole(ctx.from.id) !== "admin") {
+        await ctx.answerCallbackQuery("🚫 Only admin can approve!");
+        return;
+    }
+    
     const userId = ctx.match[1];
     const paymentData = userPaymentData[userId];
-    if (!paymentData) { await ctx.answerCallbackQuery("Payment request not found!"); return; }
+    if (!paymentData) {
+        await ctx.answerCallbackQuery("Payment request not found!");
+        return;
+    }
+    
     const expiryFormatted = addPremiumUser(userId, paymentData.name || "User", PREMIUM_PLAN.duration);
-    try { await ctx.api.sendMessage(userId, PAYMENT_MESSAGES.approved, { parse_mode: "Markdown" }); } catch(e) {}
+    
+    try {
+        await ctx.api.sendMessage(userId, PAYMENT_MESSAGES.approved, { parse_mode: "Markdown" });
+    } catch(e) {}
+    
     const currentCaption = ctx.message.caption || "";
-    await ctx.editMessageCaption(currentCaption + `\n\n✅ **APPROVED & ADDED**\n📅 Expiry: ${expiryFormatted}`, { parse_mode: "Markdown" });
+    const newCaption = currentCaption + `\n\n✅ **APPROVED & ADDED**\n📅 Expiry: ${expiryFormatted}`;
+    
+    await ctx.editMessageCaption(newCaption, { parse_mode: "Markdown" });
     await ctx.answerCallbackQuery("✅ Approved!");
+    
     delete userPaymentData[userId];
+    delete userPaymentState[userId];
 });
 
 bot.callbackQuery(/^reject_(.+)$/, async (ctx) => {
-    if (getUserRole(ctx.from.id) !== "admin") { await ctx.answerCallbackQuery("🚫 Only admin can reject!"); return; }
+    if (getUserRole(ctx.from.id) !== "admin") {
+        await ctx.answerCallbackQuery("🚫 Only admin can reject!");
+        return;
+    }
+    
     const userId = ctx.match[1];
     const paymentData = userPaymentData[userId];
-    try { await ctx.api.sendMessage(userId, PAYMENT_MESSAGES.rejected.replace('{admin_username}', ADMIN_USERNAME), { parse_mode: "Markdown" }); } catch(e) {}
+    
+    try {
+        await ctx.api.sendMessage(userId, PAYMENT_MESSAGES.rejected.replace('{admin_username}', ADMIN_USERNAME), { parse_mode: "Markdown" });
+    } catch(e) {}
+    
     const currentCaption = ctx.message.caption || "";
-    await ctx.editMessageCaption(currentCaption + `\n\n❌ **REJECTED**\n\nPayment request has been rejected.`, { parse_mode: "Markdown" });
+    const newCaption = currentCaption + `\n\n❌ **REJECTED**\n\nPayment request has been rejected.`;
+    
+    await ctx.editMessageCaption(newCaption, { parse_mode: "Markdown" });
     await ctx.answerCallbackQuery("❌ Rejected!");
+    
     delete userPaymentData[userId];
+    delete userPaymentState[userId];
 });
 
 // ==================== START ====================
 async function main() {
     console.log("\n" + "=".repeat(60));
-    console.log("🤖 Range X Orange Bot v4.0");
+    console.log("🤖 Range X Orange Bot v3.0");
     console.log("=".repeat(60));
     
     console.log("\n🔐 Checking device authorization...");
     const isVerified = await verifyDevice();
-    if (!isVerified) { console.log("\n❌ Device not authorized! Bot cannot run."); process.exit(1); }
+    
+    if (!isVerified) {
+        console.log("\n❌ Device not authorized! Bot cannot run.");
+        console.log("📝 Please contact admin to register this device.");
+        process.exit(1);
+    }
     
     console.log(`\n👑 Admin ID: ${ADMIN_ID}`);
     console.log(`🔥 Chrome Browsers: ${BROWSER_COUNT}`);
@@ -1183,13 +1635,23 @@ async function main() {
     console.log(`⏱️ Scan Interval: ${SCAN_INTERVAL_MS}ms`);
     console.log(`⏱️ Scan Timeout: ${SCAN_TIMEOUT_MS}ms`);
     console.log(`⏱️ Login Wait: ${LOGIN_WAIT_MS/1000} seconds`);
-    console.log(`📁 Data Directory: ${DATA_DIR}`);
     console.log(`🔄 Live Auto Refresh: ${LIVE_AUTO_REFRESH_ENABLED ? "ON" : "OFF"}`);
+    console.log(`🔄 Demo Live Update: ${DEMO_LIVE_UPDATE_ENABLED ? "ON" : "OFF"}`);
+    console.log(`📝 Log file: ${LOG_PATH}`);
     console.log(`✅ Bot is running with Polling\n`);
     
     loadUsers();
     startMultiBrowserScanner();
     bot.start();
+    
+    if (BOT_ONLINE_NOTIFICATION) {
+        setTimeout(async () => {
+            for (const u of Object.keys(users)) {
+                try { await bot.api.sendMessage(u, "✅ **Bot is back ONLINE!**\n\nAll features are now available.\nUse /start to access the menu.", { parse_mode: "Markdown" }); await new Promise(r => setTimeout(r, 100)); } catch(e) {}
+            }
+        }, 5000);
+    }
+    
     console.log("\n🎯 Scanner is running...\n");
 }
 
