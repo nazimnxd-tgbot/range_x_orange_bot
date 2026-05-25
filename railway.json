@@ -2,8 +2,8 @@
   "build": {
     "builder": "NIXPACKS",
     "nixpacksConfig": {
-      "setup": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-0 libnss3 libnss3-dev libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcups2 libdrm2 libxkbcommon0 libgbm1 libasound2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxtst6 libpango-1.0-0 libcairo2 libx11-xcb1 libxcb1 libxshmfence1",
-      "install": "npm install && npx playwright install chromium --with-deps",
+      "setup": "apt-get update && apt-get install -y libglib2.0-0 libnss3 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 libasound2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxtst6",
+      "install": "npm install && npx playwright install-deps && npx playwright install chromium",
       "nodeVersion": "20.x"
     }
   },
