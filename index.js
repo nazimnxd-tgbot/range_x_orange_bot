@@ -57,7 +57,7 @@ import {
     DEMO_COUNTRY_SUMMARY_LIMIT,
     DEMO_MASK_MODE,
     RANGES_PER_CLI
-} from './env.js';
+} from './config/env.js';
 
 // Import payment configuration
 import { 
@@ -68,10 +68,10 @@ import {
     ADMIN_NOTIFICATION, 
     BUTTON_LABELS,
     getPriceDisplay 
-} from './paymentenv.js';
+} from './config/paymentenv.js';
 
-import { getCliTargets } from './cli.js';
-import { getCountryFlag, getCountryNameFromRange } from './countries.js';
+import { getCliTargets } from './config/cli.js';
+import { getCountryFlag, getCountryNameFromRange } from './config/countries.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
